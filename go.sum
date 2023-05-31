@@ -1,0 +1,4 @@
+github.com/spaolacci/murmur3 v1.1.0 h1:7c1g84S4BPRrfL5Xrdp6fOJ206sU9y293DDHaoy0bLI=
+github.com/spaolacci/murmur3 v1.1.0/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
+github.com/tidwall/lotsa v1.0.3 h1:lFAp3PIsS58FPmz+LzhE1mcZ67tBBCRPv5j66g6y7sg=
+github.com/tidwall/lotsa v1.0.3/go.mod h1:cPF+z88hamDNDjvE+u3suxCtRMVw24Gvze9eeWGYook=
