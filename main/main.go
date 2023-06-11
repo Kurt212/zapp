@@ -85,10 +85,15 @@ func main() {
 			panic(fmt.Errorf("%s is not equal to %s", string(v), string(data)))
 		}
 	}
-	fmt.Println("Finished testing correctess and durability")
-	/////////////////////////////////
 
-	N := 10_000
+	fmt.Println("Finished testing correctess and durability")
+	fmt.Println("Test is passed")
+	/////////////////////////////////
+	fmt.Println("Testing performance:")
+
+	fmt.Println("Set operation:")
+
+	N := 10_000_000
 	K := 10
 
 	keysm := make(map[string]bool, N)
@@ -107,6 +112,17 @@ func main() {
 		b := make([]byte, 8)
 		binary.BigEndian.PutUint64(b, uint64(i))
 		err := db.Set(keys[i], b)
+		if err != nil {
+			panic(err)
+		}
+	})
+
+	fmt.Println("Get operation:")
+
+	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
+		b := make([]byte, 8)
+		binary.BigEndian.PutUint64(b, uint64(i))
+		_, err := db.Get(keys[i])
 		if err != nil {
 			panic(err)
 		}

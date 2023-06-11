@@ -47,9 +47,12 @@ func New() (*DB, error) {
 }
 
 func (db *DB) Set(key string, data []byte) error {
-	segment := db.getSegmentForKey(key)
+	byteKey := []byte(key)
 
-	err := segment.Set(key, data)
+	h := hash(byteKey)
+	segment := db.getSegmentForKey(h)
+
+	err := segment.Set(h, byteKey, data)
 	if err != nil {
 		return err
 	}
@@ -58,9 +61,12 @@ func (db *DB) Set(key string, data []byte) error {
 }
 
 func (db *DB) Get(key string) ([]byte, error) {
-	segment := db.getSegmentForKey(key)
+	byteKey := []byte(key)
 
-	data, err := segment.Get(key)
+	h := hash(byteKey)
+	segment := db.getSegmentForKey(h)
+
+	data, err := segment.Get(h, byteKey)
 	if err != nil {
 		return nil, err
 	}
@@ -69,9 +75,12 @@ func (db *DB) Get(key string) ([]byte, error) {
 }
 
 func (db *DB) Delete(key string) error {
-	segment := db.getSegmentForKey(key)
+	byteKey := []byte(key)
 
-	data, err := segment.Delete(key)
+	h := hash(byteKey)
+	segment := db.getSegmentForKey(h)
+
+	err := segment.Delete(h, byteKey)
 	if err != nil {
 		return err
 	}
@@ -79,15 +88,14 @@ func (db *DB) Delete(key string) error {
 	return nil
 }
 
-func (db *DB) getSegmentForKey(key string) *segment {
-	segmentIdx := getSegmentIndex(key, len(db.segments))
+func (db *DB) getSegmentForKey(hash uint32) *segment {
+	segmentIdx := getSegmentIndex(hash, len(db.segments))
 
 	segment := db.segments[segmentIdx]
 
 	return segment
 }
 
-func getSegmentIndex(key string, segmentsCount int) int {
-	h := hash([]byte(key))
-	return int(h % uint32(segmentsCount))
+func getSegmentIndex(hash uint32, segmentsCount int) int {
+	return int(hash % uint32(segmentsCount))
 }
