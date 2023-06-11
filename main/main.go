@@ -9,12 +9,12 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/Kurt212/zepp"
+	"github.com/Kurt212/zapp"
 	"github.com/tidwall/lotsa"
 )
 
 func main() {
-	db, err := zepp.New()
+	db, err := zapp.New()
 	if err != nil {
 		log.Fatalln(err)
 	}

@@ -1,4 +1,4 @@
-package zepp
+package zapp
 
 import (
 	"github.com/spaolacci/murmur3"

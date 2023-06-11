@@ -1,4 +1,4 @@
-module github.com/Kurt212/zepp
+module github.com/Kurt212/zapp
 
 go 1.20
 
