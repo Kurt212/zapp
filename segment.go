@@ -3,11 +3,26 @@ package zapp
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/Kurt212/zapp/blob"
+)
+
+const (
+	segmentFileLayoutVerion1 = 1
+
+	segmentFileMagicNumbersSize   = 3 // bytes
+	segmentFileLayoutSize         = 1 // byte
+	segmentFileLayoutReservedSize = 12
+
+	segmentFileHeaderSize = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize
+)
+
+var (
+	segmentFileBeginMagicNumbers = []byte{212, 211, 212}
 )
 
 type segment struct {
@@ -25,7 +40,7 @@ type offsetMetaInfo struct {
 func newSegment(path string) (*segment, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("can not create segment %s: %w", path, err)
+		return nil, fmt.Errorf("can not open file %s: %w", path, err)
 	}
 
 	seg := &segment{
@@ -35,9 +50,123 @@ func newSegment(path string) (*segment, error) {
 		emptySizeToOffsets: make(map[int][]int64),
 	}
 
-	// TODO read whole file and make fill hash to offset map and empty size to offset map
+	// read whole file and make fill hash to offset map and empty size to offset map
+	err = seg.loadDataFromDisk()
+	if err != nil {
+		return nil, fmt.Errorf("can not load data from disk: %w", err)
+	}
 
 	return seg, nil
+}
+
+func (seg *segment) loadDataFromDisk() error {
+	file := seg.file
+
+	// move file cursor to the beginning of the file
+	fileBeginOffset, err := file.Seek(0, OriginWhence)
+	if err != nil {
+		return err
+	}
+
+	// read segment file header and validate it
+	fileHeaderBuffer := make([]byte, segmentFileHeaderSize)
+
+	_, err = file.Read(fileHeaderBuffer)
+	// this is okay because this may be an new file without any header at all
+	// write header to the disk and stop loading
+	if err == io.EOF {
+		copy(fileHeaderBuffer, segmentFileBeginMagicNumbers)
+		fileHeaderBuffer[segmentFileMagicNumbersSize] = segmentFileLayoutVerion1
+
+		_, err = file.WriteAt(fileHeaderBuffer, fileBeginOffset)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+	// if this is not EOF, then trigger error
+	if err != nil {
+		return err
+	}
+
+	// parse header from the buffer
+	fileMagicNumbers := fileHeaderBuffer[0:segmentFileMagicNumbersSize]
+
+	if !bytes.Equal(fileMagicNumbers, segmentFileBeginMagicNumbers) {
+		return ErrSegmentMagicNumbersDoNotMatch
+	}
+
+	fileVersion := fileHeaderBuffer[segmentFileMagicNumbersSize]
+	if fileVersion != segmentFileLayoutVerion1 {
+		return ErrSegmentUnknownVersionNumber
+	}
+
+	// the left data in buffer is garbage
+	// there is extra space allocated in file header for future
+
+	// read blobs from file until EOF
+
+	currentOffset := int64(segmentFileHeaderSize)
+
+	for {
+		// first read a constant sized header of a new blob from disk
+		// after header is read, check blob's status in header
+		// expired and deleted blobs will go to empty size to offset map
+		// valid blobs will go to hash to offsets map
+		blobHeaderBuffer := make([]byte, blob.HeaderSize)
+
+		_, err := file.ReadAt(blobHeaderBuffer, currentOffset)
+		if err == io.EOF {
+			break
+		}
+
+		blobHeader := blob.UnmarshalHeader(blobHeaderBuffer)
+
+		blobSize := 1 << blobHeader.SizePower
+
+		switch {
+		case blobHeader.Status == blob.StatusDeleted: // TODO add expire here
+			// this is an empty blob, so just save it to empty sizes map
+			offsetsSlice := seg.emptySizeToOffsets[blobSize]
+
+			offsetsSlice = append(offsetsSlice, currentOffset)
+
+			seg.emptySizeToOffsets[blobSize] = offsetsSlice
+
+		case blobHeader.Status == blob.StatusOK:
+			// blob size is sum of header size and body size
+			bodySize := blobSize - blob.HeaderSize
+
+			// read blob's body from disk
+			blobBodyBuffer := make([]byte, bodySize)
+
+			_, err := file.ReadAt(blobBodyBuffer, currentOffset+blob.HeaderSize)
+			if err != nil {
+				return err
+			}
+
+			kve := blob.UnmarshalBody(blobBodyBuffer, blobHeader)
+
+			// calculate hash from key and store data about this blob in hash to offset map
+			keyHash := hash(kve.Key)
+
+			hashOffsets := seg.hashToOffsetMap[keyHash]
+
+			hashOffsets = append(hashOffsets, offsetMetaInfo{
+				offset: currentOffset,
+				size:   blobSize,
+			})
+
+			seg.hashToOffsetMap[keyHash] = hashOffsets
+		default:
+			panic(ErrUnknownBlobStatus)
+		}
+
+		currentOffset += int64(blobSize)
+	}
+
+	return nil
 }
 
 func (seg *segment) Set(hash uint32, key []byte, value []byte) error {
@@ -96,7 +225,7 @@ func (seg *segment) SetExpire(hash uint32, key []byte, value []byte, ttl time.Du
 				}
 
 				// Add this offset to list of free empty offsets
-				emptyOffsets, _ := seg.emptySizeToOffsets[offsetInfo.size]
+				emptyOffsets := seg.emptySizeToOffsets[offsetInfo.size]
 
 				emptyOffsets = append(emptyOffsets, offsetInfo.offset)
 
@@ -249,7 +378,7 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	}
 
 	// Add this offset to list of free empty offsets
-	emptyOffsets, _ := seg.emptySizeToOffsets[itemOffsetInfo.size]
+	emptyOffsets := seg.emptySizeToOffsets[itemOffsetInfo.size]
 
 	emptyOffsets = append(emptyOffsets, itemOffsetInfo.offset)
 
@@ -267,4 +396,21 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
 
 	return nil
+}
+
+func (seg *segment) Close() error {
+	seg.mtx.Lock()
+	defer seg.mtx.Unlock()
+
+	err := seg.file.Sync()
+	if err != nil {
+		return err
+	}
+
+	err = seg.file.Close()
+	if err != nil {
+		return err
+	}
+
+	return err
 }

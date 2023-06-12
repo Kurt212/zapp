@@ -14,6 +14,11 @@ import (
 )
 
 func main() {
+	err := os.RemoveAll("data")
+	if err != nil {
+		panic(err)
+	}
+
 	db, err := zapp.New()
 	if err != nil {
 		log.Fatalln(err)
@@ -22,7 +27,7 @@ func main() {
 	seed := int64(1570109110136449000)
 	rng := rand.New(rand.NewSource(seed))
 	/////////////////////////////////
-	fmt.Println("Testing correctess and durability")
+	fmt.Println("Testing correctess")
 
 	type d struct {
 		k string
@@ -110,8 +115,61 @@ func main() {
 		}
 	}
 
-	fmt.Println("Finished testing correctess and durability")
-	fmt.Println("Test is passed")
+	fmt.Printf("Finished testing correctess. Test is passed\n\n\n")
+	/////////////////////////////////
+	fmt.Println("Testing durability")
+
+	fmt.Println("Closing old db and opening again...")
+	err = db.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	db, err = zapp.New()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Filling some data...")
+
+	for i := 0; i < 1000; i++ {
+		kv := testData[i]
+		k, v := kv.k, kv.v
+
+		err := db.Set(k, v)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	fmt.Println("Closing old db and opening again...")
+	err = db.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	db, err = zapp.New()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Checking data...")
+
+	for i := 0; i < 1000; i++ {
+		kv := testData[i]
+		k, v := kv.k, kv.v
+
+		data, err := db.Get(k)
+		if err != nil {
+			panic(err)
+		}
+
+		if !bytes.Equal(v, data) {
+			panic(fmt.Errorf("%s is not equal to %s", string(v), string(data)))
+		}
+	}
+
+	fmt.Printf("Finished testing durability. Test is passed\n\n\n")
 	/////////////////////////////////
 	fmt.Println("Testing performance:")
 
@@ -169,7 +227,6 @@ func main() {
 			panic(err)
 		}
 	})
-
 }
 
 func randKey(rnd *rand.Rand, n int) []byte {

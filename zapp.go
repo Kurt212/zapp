@@ -88,6 +88,17 @@ func (db *DB) Delete(key string) error {
 	return nil
 }
 
+func (db *DB) Close() error {
+	for idx, segment := range db.segments {
+		err := segment.Close()
+		if err != nil {
+			return fmt.Errorf("close segment %d: %w", idx, err)
+		}
+	}
+
+	return nil
+}
+
 func (db *DB) getSegmentForKey(hash uint32) *segment {
 	segmentIdx := getSegmentIndex(hash, len(db.segments))
 

@@ -58,6 +58,12 @@ func (kve KVE) Marshal() (_ []byte, nextPowerOfTwo int) {
 }
 
 func Unmarshal(buffer []byte) KVE {
+	header := UnmarshalHeader(buffer[:HeaderSize])
+
+	return UnmarshalBody(buffer[HeaderSize:], header)
+}
+
+func UnmarshalHeader(buffer []byte) Header {
 	header := Header{}
 
 	// TODO checks for bad buffer lengths
@@ -79,9 +85,14 @@ func Unmarshal(buffer []byte) KVE {
 	header.Expire = binary.BigEndian.Uint32(buffer[offset : offset+ExpireSize])
 	offset += ExpireSize
 
+	return header
+}
+
+func UnmarshalBody(buffer []byte, header Header) KVE {
+	// TODO checks for bad buffer lengths
 	kve := KVE{
-		Key:    buffer[HeaderSize+header.ValLen : HeaderSize+header.ValLen+uint32(header.KeyLen)],
-		Value:  buffer[HeaderSize : HeaderSize+header.ValLen],
+		Key:    buffer[header.ValLen : header.ValLen+uint32(header.KeyLen)],
+		Value:  buffer[:header.ValLen],
 		Expire: header.Expire,
 	}
 
