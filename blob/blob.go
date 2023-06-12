@@ -2,7 +2,22 @@ package blob
 
 import "encoding/binary"
 
-const HeaderSize = 12 // bytes
+const (
+	SizePowerSize = 1 // byte
+	StatusSize    = 1 // byte
+	KeyLenSize    = 2 // bytes
+	ValLenSize    = 4 // bytes
+	ExpireSize    = 4 // bytes
+
+	HeaderSize = SizePowerSize + StatusSize + KeyLenSize + ValLenSize + ExpireSize // bytes
+
+	StatusOffset = SizePowerSize
+)
+
+const (
+	StatusOK      = 212
+	StatusDeleted = 106
+)
 
 type Status byte
 
@@ -29,7 +44,7 @@ func (kve KVE) Marshal() (_ []byte, nextPowerOfTwo int) {
 
 	header := Header{
 		SizePower: powerNumber,
-		Status:    0,
+		Status:    StatusOK,
 		KeyLen:    uint16(len(kve.Key)),
 		ValLen:    uint32(len(kve.Value)),
 		Expire:    kve.Expire,
@@ -47,14 +62,22 @@ func Unmarshal(buffer []byte) KVE {
 
 	// TODO checks for bad buffer lengths
 
-	header.SizePower = buffer[0]
-	header.Status = Status(buffer[1])
+	var offset = 0
 
-	header.KeyLen = binary.BigEndian.Uint16(buffer[2:4])
+	header.SizePower = buffer[offset]
+	offset += SizePowerSize
 
-	header.ValLen = binary.BigEndian.Uint32(buffer[4:9])
+	header.Status = Status(buffer[offset])
+	offset += StatusSize
 
-	header.Expire = binary.BigEndian.Uint32(buffer[8:12])
+	header.KeyLen = binary.BigEndian.Uint16(buffer[offset : offset+KeyLenSize])
+	offset += KeyLenSize
+
+	header.ValLen = binary.BigEndian.Uint32(buffer[offset : offset+ValLenSize])
+	offset += ValLenSize
+
+	header.Expire = binary.BigEndian.Uint32(buffer[offset : offset+ExpireSize])
+	offset += ExpireSize
 
 	kve := KVE{
 		Key:    buffer[HeaderSize+header.ValLen : HeaderSize+header.ValLen+uint32(header.KeyLen)],

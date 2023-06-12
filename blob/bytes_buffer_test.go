@@ -15,7 +15,7 @@ func TestBuffer(t *testing.T) {
 
 		h := Header{
 			SizePower: 5,
-			Status:    0,
+			Status:    212,
 			KeyLen:    uint16(len(key)),
 			ValLen:    uint32(len(value)),
 			Expire:    0,
@@ -29,7 +29,7 @@ func TestBuffer(t *testing.T) {
 
 		expect := []byte{
 			5,    // size power
-			0,    // status
+			212,  // status
 			0, 3, // key len
 			0, 0, 0, 4, // val len
 			0, 0, 0, 0, // expire
@@ -55,7 +55,7 @@ func TestBuffer(t *testing.T) {
 
 		expect := []byte{
 			5,    // size power
-			0,    // status
+			212,  // status
 			0, 3, // key len
 			0, 0, 0, 4, // val len
 			0, 0, 0, 0, // expire

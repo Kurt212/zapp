@@ -2,7 +2,6 @@ package zapp
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -36,6 +35,8 @@ func newSegment(path string) (*segment, error) {
 		emptySizeToOffsets: make(map[int][]int64),
 	}
 
+	// TODO read whole file and make fill hash to offset map and empty size to offset map
+
 	return seg, nil
 }
 
@@ -68,6 +69,7 @@ func (seg *segment) SetExpire(hash uint32, key []byte, value []byte, ttl time.Du
 	if ok {
 		for idx, offsetInfo := range offsetsWithCurrentHash {
 			// TODO redo read key more effectively
+			// Don't know how for now. Not sure that two disk reads are better than on big read
 			dataBuffer := make([]byte, offsetInfo.size)
 
 			_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
@@ -80,11 +82,18 @@ func (seg *segment) SetExpire(hash uint32, key []byte, value []byte, ttl time.Du
 
 			// if found previous blob of current key
 			// then mark if as deleted
+			// because we are replacing it with a new value now
 			if bytes.Equal(key, onDiskKey) {
 				duplicateKeyIdx = idx
 
-				// TODO write on disk that data is deleted
-				// ...
+				// write on disk that data is deleted
+				deletedStatusByte := []byte{blob.StatusDeleted}
+
+				// TODO make sure that if something is broken during this write then norhing bad will happen
+				_, err := seg.file.WriteAt(deletedStatusByte, offsetInfo.offset+blob.StatusOffset)
+				if err != nil {
+					return err // TODO wrap
+				}
 
 				// Add this offset to list of free empty offsets
 				emptyOffsets, _ := seg.emptySizeToOffsets[offsetInfo.size]
@@ -189,5 +198,73 @@ func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 }
 
 func (seg *segment) Delete(hash uint32, key []byte) error {
-	return errors.New("not implemented")
+	seg.mtx.Lock()
+	defer seg.mtx.Unlock()
+
+	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
+
+	if !ok {
+		return ErrNotFound
+	}
+
+	itemIdx := -1
+	var itemOffsetInfo offsetMetaInfo
+
+	for idx, offsetInfo := range offsetsWithCurrentHash {
+		// TODO redo read key more effectively
+		// Don't know how for now. Not sure that two disk reads are better than on big read
+		dataBuffer := make([]byte, offsetInfo.size)
+
+		_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
+		if err != nil {
+			return err // TODO wrap
+		}
+
+		kveOnDisk := blob.Unmarshal(dataBuffer)
+		onDiskKey := kveOnDisk.Key
+
+		// if found previous blob of current key
+		// then mark if as deleted
+		// because we are replacing it with a new value now
+		if bytes.Equal(key, onDiskKey) {
+			itemIdx = idx
+			itemOffsetInfo = offsetInfo
+
+			// now as duplicate index is found it's ok to stop the for-loop
+			break
+		}
+	}
+
+	if itemIdx == -1 {
+		return ErrNotFound
+	}
+
+	// write on disk that data is deleted
+	deletedStatusByte := []byte{blob.StatusDeleted}
+
+	// TODO make sure that if something is broken during this write then norhing bad will happen
+	_, err := seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
+	if err != nil {
+		return err // TODO wrap
+	}
+
+	// Add this offset to list of free empty offsets
+	emptyOffsets, _ := seg.emptySizeToOffsets[itemOffsetInfo.size]
+
+	emptyOffsets = append(emptyOffsets, itemOffsetInfo.offset)
+
+	seg.emptySizeToOffsets[itemOffsetInfo.size] = emptyOffsets
+
+	// TODO move to a function or smth. Make it more clear
+
+	// Just replace duplicate with the last item and then crop the slice
+	currentLength := len(offsetsWithCurrentHash)
+
+	offsetsWithCurrentHash[itemIdx] = offsetsWithCurrentHash[currentLength-1]
+
+	offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
+
+	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
+
+	return nil
 }

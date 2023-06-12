@@ -86,12 +86,36 @@ func main() {
 		}
 	}
 
+	for i := 0; i < 1000; i++ {
+		kv := testData[i]
+		err = db.Delete(kv.k)
+		if err != nil {
+			panic(fmt.Errorf("when Delete key '%s' got error: '%v'", kv.k, err))
+		}
+	}
+
+	for i := 0; i < 1000; i++ {
+		kv := testData[i]
+		_, err = db.Get(kv.k)
+		if err != zapp.ErrNotFound {
+			panic(fmt.Errorf("when Get deleted key got error %v other ErrNotFound", err))
+		}
+	}
+
+	for i := 0; i < 1000; i++ {
+		kv := testData[i]
+		err = db.Delete(kv.k)
+		if err != zapp.ErrNotFound {
+			panic(fmt.Errorf("when Delete deleted key got error %v other ErrNotFound", err))
+		}
+	}
+
 	fmt.Println("Finished testing correctess and durability")
 	fmt.Println("Test is passed")
 	/////////////////////////////////
 	fmt.Println("Testing performance:")
 
-	fmt.Println("Set operation:")
+	fmt.Println("Set new keys operation:")
 
 	N := 10_000_000
 	K := 10
@@ -117,12 +141,30 @@ func main() {
 		}
 	})
 
-	fmt.Println("Get operation:")
+	fmt.Println("Replace the same keys operation:")
 
 	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
 		b := make([]byte, 8)
-		binary.BigEndian.PutUint64(b, uint64(i))
+		binary.BigEndian.PutUint64(b, uint64(i)+1)
+		err := db.Set(keys[i], b)
+		if err != nil {
+			panic(err)
+		}
+	})
+
+	fmt.Println("Get operation:")
+
+	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
 		_, err := db.Get(keys[i])
+		if err != nil {
+			panic(err)
+		}
+	})
+
+	fmt.Println("Delete operation:")
+
+	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
+		err := db.Delete(keys[i])
 		if err != nil {
 			panic(err)
 		}
