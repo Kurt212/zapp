@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/Kurt212/zapp"
 	"github.com/tidwall/lotsa"
@@ -47,7 +49,7 @@ func main() {
 		kv := testData[i]
 		k, v := kv.k, kv.v
 
-		err := db.Set(k, v)
+		err := db.Set(k, v, 0)
 		if err != nil {
 			panic(err)
 		}
@@ -71,7 +73,7 @@ func main() {
 		kv := testData[i]
 		k, v := kv.k, kv.v
 
-		err := db.Set(k, v)
+		err := db.Set(k, v, 0)
 		if err != nil {
 			panic(err)
 		}
@@ -136,7 +138,7 @@ func main() {
 		kv := testData[i]
 		k, v := kv.k, kv.v
 
-		err := db.Set(k, v)
+		err := db.Set(k, v, 0)
 		if err != nil {
 			panic(err)
 		}
@@ -171,6 +173,66 @@ func main() {
 
 	fmt.Printf("Finished testing durability. Test is passed\n\n\n")
 	/////////////////////////////////
+	fmt.Println("Checking expiry")
+
+	ttl := time.Second * 5
+
+	for i := 0; i < 100; i++ {
+		kv := testData[i]
+		k, v := kv.k, kv.v
+
+		err := db.Set(k, v, ttl)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	for i := 0; i < 100; i++ {
+		kv := testData[i]
+		k, v := kv.k, kv.v
+
+		data, err := db.Get(k)
+		if err != nil {
+			panic(err)
+		}
+
+		if !bytes.Equal(v, data) {
+			panic(fmt.Errorf("%s is not equal to %s", string(v), string(data)))
+		}
+	}
+
+	time.Sleep(ttl + time.Second)
+
+	for i := 0; i < 100; i++ {
+		kv := testData[i]
+
+		_, err := db.Get(kv.k)
+		if !errors.Is(err, zapp.ErrNotFound) {
+			panic(fmt.Errorf("expected NotFound error, but got: %w", err))
+		}
+	}
+
+	err = db.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	db, err = zapp.New()
+	if err != nil {
+		panic(err)
+	}
+
+	for i := 0; i < 100; i++ {
+		kv := testData[i]
+
+		_, err := db.Get(kv.k)
+		if !errors.Is(err, zapp.ErrNotFound) {
+			panic(fmt.Errorf("expected NotFound error, but got: %w", err))
+		}
+	}
+
+	fmt.Printf("Finished checking expiry. Test is passed\n\n\n")
+	/////////////////////////////////
 	fmt.Println("Testing performance:")
 
 	fmt.Println("Set new keys operation:")
@@ -193,7 +255,7 @@ func main() {
 	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
 		b := make([]byte, 8)
 		binary.BigEndian.PutUint64(b, uint64(i))
-		err := db.Set(keys[i], b)
+		err := db.Set(keys[i], b, 0)
 		if err != nil {
 			panic(err)
 		}
@@ -204,7 +266,7 @@ func main() {
 	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
 		b := make([]byte, 8)
 		binary.BigEndian.PutUint64(b, uint64(i)+1)
-		err := db.Set(keys[i], b)
+		err := db.Set(keys[i], b, 0)
 		if err != nil {
 			panic(err)
 		}

@@ -30,6 +30,7 @@ type segment struct {
 	mtx                sync.Mutex
 	hashToOffsetMap    map[uint32][]offsetMetaInfo
 	emptySizeToOffsets map[int][]int64
+	closedChan         chan struct{}
 }
 
 type offsetMetaInfo struct {
@@ -37,7 +38,9 @@ type offsetMetaInfo struct {
 	size   int   // the length of data in current offset in bytes
 }
 
-func newSegment(path string) (*segment, error) {
+func newSegment(
+	path string,
+) (*segment, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("can not open file %s: %w", path, err)
@@ -48,6 +51,7 @@ func newSegment(path string) (*segment, error) {
 		mtx:                sync.Mutex{},
 		hashToOffsetMap:    make(map[uint32][]offsetMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
+		closedChan:         make(chan struct{}),
 	}
 
 	// read whole file and make fill hash to offset map and empty size to offset map
@@ -109,6 +113,8 @@ func (seg *segment) loadDataFromDisk() error {
 
 	currentOffset := int64(segmentFileHeaderSize)
 
+	now := time.Now() // to check the expire fields of the items
+
 	for {
 		// first read a constant sized header of a new blob from disk
 		// after header is read, check blob's status in header
@@ -126,6 +132,10 @@ func (seg *segment) loadDataFromDisk() error {
 		blobSize := 1 << blobHeader.SizePower
 
 		switch {
+		// If meet an expired blob, then treat it as a deleted blob.
+		// On disk it will remain expired until someone overwrites it
+		case blobHeader.Expire != 0 && time.Unix(int64(blobHeader.Expire), 0).Before(now):
+			fallthrough
 		case blobHeader.Status == blob.StatusDeleted: // TODO add expire here
 			// this is an empty blob, so just save it to empty sizes map
 			offsetsSlice := seg.emptySizeToOffsets[blobSize]
@@ -169,18 +179,14 @@ func (seg *segment) loadDataFromDisk() error {
 	return nil
 }
 
-func (seg *segment) Set(hash uint32, key []byte, value []byte) error {
-	return seg.SetExpire(hash, key, value, 0)
-}
-
-func (seg *segment) SetExpire(hash uint32, key []byte, value []byte, ttl time.Duration) error {
+func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration) error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
 	// transfer duration to timestamp only if it's not empty
 	expire := uint32(0)
 	if ttl.Milliseconds() > 0 {
-		expire = uint32(time.Now().Add(ttl).UnixMilli())
+		expire = uint32(time.Now().Add(ttl).Unix())
 	}
 
 	kve := blob.KVE{
@@ -191,12 +197,9 @@ func (seg *segment) SetExpire(hash uint32, key []byte, value []byte, ttl time.Du
 
 	// first try to find if there is this key already set
 	// if found same existing key, delete old one and mark its disk space as empty
-
-	duplicateKeyIdx := -1
-
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
 	if ok {
-		for idx, offsetInfo := range offsetsWithCurrentHash {
+		for _, offsetInfo := range offsetsWithCurrentHash {
 			// TODO redo read key more effectively
 			// Don't know how for now. Not sure that two disk reads are better than on big read
 			dataBuffer := make([]byte, offsetInfo.size)
@@ -213,40 +216,21 @@ func (seg *segment) SetExpire(hash uint32, key []byte, value []byte, ttl time.Du
 			// then mark if as deleted
 			// because we are replacing it with a new value now
 			if bytes.Equal(key, onDiskKey) {
-				duplicateKeyIdx = idx
-
 				// write on disk that data is deleted
 				deletedStatusByte := []byte{blob.StatusDeleted}
 
-				// TODO make sure that if something is broken during this write then norhing bad will happen
+				// TODO make sure that if something is broken during this write then nothing bad will happen
 				_, err := seg.file.WriteAt(deletedStatusByte, offsetInfo.offset+blob.StatusOffset)
 				if err != nil {
 					return err // TODO wrap
 				}
 
-				// Add this offset to list of free empty offsets
-				emptyOffsets := seg.emptySizeToOffsets[offsetInfo.size]
+				// Add this offset to list of free empty offsets and delete from hash to offset map
+				seg.rawDeleteOffsetFromMemory(hash, offsetInfo)
 
-				emptyOffsets = append(emptyOffsets, offsetInfo.offset)
-
-				seg.emptySizeToOffsets[offsetInfo.size] = emptyOffsets
 				// now as duplicate index is found it's ok to stop the for-loop
 				break
 			}
-		}
-
-		// if duplicate was found, then delete it from list of offsets for the same hash
-		if duplicateKeyIdx > 0 {
-			// TODO move to a function or smth. Make it more clear
-
-			// Just replace duplicate with the last item and then crop the slice
-			currentLength := len(offsetsWithCurrentHash)
-
-			offsetsWithCurrentHash[duplicateKeyIdx] = offsetsWithCurrentHash[currentLength-1]
-
-			offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
-
-			seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
 		}
 	}
 
@@ -313,11 +297,21 @@ func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 			kveOnDisk := blob.Unmarshal(dataBuffer)
 			onDiskKey := kveOnDisk.Key
 
-			// if found previous blob of current key
-			// then mark if as deleted
 			if bytes.Equal(key, onDiskKey) {
-				// TODO check expire
-				// ...
+				// check if blob is expired
+				// if expire timestamp was in the past
+				// then delete knowledge about this blob from inmemory state
+				// and return NotFound error instead of the value
+				if kveOnDisk.Expire != 0 {
+					now := time.Now()
+					expireTime := time.Unix(int64(kveOnDisk.Expire), 0)
+					if expireTime.Before(now) {
+						seg.rawDeleteOffsetFromMemory(hash, offsetInfo)
+
+						return nil, ErrNotFound
+					}
+				}
+
 				return kveOnDisk.Value, nil
 			}
 		}
@@ -377,14 +371,40 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 		return err // TODO wrap
 	}
 
+	seg.rawDeleteOffsetFromMemory(hash, itemOffsetInfo)
+
+	return nil
+}
+
+// rawDeleteOffsetFromMemory removes offset from offset map and adds this offset to empty map
+func (seg *segment) rawDeleteOffsetFromMemory(
+	hash uint32, offsetInfo offsetMetaInfo,
+) {
+	// first find this offset in hashToOffsetMap
+	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
+	// if there's no any offset with such hash, then do nothing
+	if !ok {
+		return
+	}
+
+	itemIdx := -1
+	for idx, otherOffsetInfo := range offsetsWithCurrentHash {
+		if otherOffsetInfo.offset == offsetInfo.offset && otherOffsetInfo.size == offsetInfo.size {
+			itemIdx = idx
+		}
+	}
+
+	// if didn't find this offset with such size in the list of hash offsets, then do nothing
+	if itemIdx == -1 {
+		return
+	}
+
 	// Add this offset to list of free empty offsets
-	emptyOffsets := seg.emptySizeToOffsets[itemOffsetInfo.size]
+	emptyOffsets := seg.emptySizeToOffsets[offsetInfo.size]
 
-	emptyOffsets = append(emptyOffsets, itemOffsetInfo.offset)
+	emptyOffsets = append(emptyOffsets, offsetInfo.offset)
 
-	seg.emptySizeToOffsets[itemOffsetInfo.size] = emptyOffsets
-
-	// TODO move to a function or smth. Make it more clear
+	seg.emptySizeToOffsets[offsetInfo.size] = emptyOffsets
 
 	// Just replace duplicate with the last item and then crop the slice
 	currentLength := len(offsetsWithCurrentHash)
@@ -394,13 +414,13 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
 
 	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
-
-	return nil
 }
 
 func (seg *segment) Close() error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
+
+	close(seg.closedChan)
 
 	err := seg.file.Sync()
 	if err != nil {

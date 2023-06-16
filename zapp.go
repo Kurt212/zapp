@@ -46,13 +46,13 @@ func New() (*DB, error) {
 	return db, nil
 }
 
-func (db *DB) Set(key string, data []byte) error {
+func (db *DB) Set(key string, data []byte, ttl time.Duration) error {
 	byteKey := []byte(key)
 
 	h := hash(byteKey)
 	segment := db.getSegmentForKey(h)
 
-	err := segment.Set(h, byteKey, data)
+	err := segment.Set(h, byteKey, data, ttl)
 	if err != nil {
 		return err
 	}

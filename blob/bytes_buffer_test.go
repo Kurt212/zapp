@@ -77,7 +77,7 @@ func TestBuffer(t *testing.T) {
 			0,    // status
 			0, 3, // key len
 			0, 0, 0, 4, // val len
-			0, 0, 0, 0, // expire
+			0, 5, 5, 0, // expire
 			0xCA, 0xFE, 0xBA, 0xBE, // value
 			0x6B, 0x65, 0x79, // key
 			0x00, 0x00, 0x00, 0x00, // padding
@@ -91,7 +91,7 @@ func TestBuffer(t *testing.T) {
 		expect := KVE{
 			Key:    []byte("key"),
 			Value:  []byte{0xCA, 0xFE, 0xBA, 0xBE},
-			Expire: 0,
+			Expire: 0x050500,
 		}
 
 		assert.Equal(t, expect, result)
