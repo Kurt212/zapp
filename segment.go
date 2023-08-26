@@ -29,7 +29,7 @@ type segment struct {
 	file          *os.File
 	fileSizeBytes int64
 
-	mtx                sync.Mutex
+	mtx                sync.RWMutex
 	hashToOffsetMap    map[uint32][]offsetMetaInfo
 	emptySizeToOffsets map[int][]int64
 	closedChan         chan struct{}
@@ -50,7 +50,7 @@ func newSegment(
 
 	seg := &segment{
 		file:               file,
-		mtx:                sync.Mutex{},
+		mtx:                sync.RWMutex{},
 		hashToOffsetMap:    make(map[uint32][]offsetMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
 		closedChan:         make(chan struct{}),
@@ -287,40 +287,42 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 }
 
 func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
-	seg.mtx.Lock()
-	defer seg.mtx.Unlock()
+	// read lock here to increate Get speed. There's no option to modify any data here, only read it
+	// for example can not delete expired item here and add it to empty map. Adding to emty map requires
+	// releasing read lock and then taking write lock. Because of the data race between those two operations
+	// need to revalidate if the item still exists and it's still expired
+	seg.mtx.RLock()
+	defer seg.mtx.RUnlock()
 
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
-	if ok {
-		for _, offsetInfo := range offsetsWithCurrentHash {
-			// TODO redo read key more effectively
-			dataBuffer := make([]byte, offsetInfo.size)
+	if !ok {
+		return nil, ErrNotFound
+	}
 
-			_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
-			if err != nil {
-				return nil, err // TODO wrap
+	now := time.Now()
+
+	for _, offsetInfo := range offsetsWithCurrentHash {
+		// TODO redo read key more effectively
+		dataBuffer := make([]byte, offsetInfo.size)
+
+		_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
+		if err != nil {
+			return nil, err // TODO wrap
+		}
+
+		kveOnDisk := blob.Unmarshal(dataBuffer)
+		onDiskKey := kveOnDisk.Key
+
+		// if met the same key, then this is the value, which should be returned
+		// the only problem is that the item may be expired, but it's still on disk
+		if bytes.Equal(key, onDiskKey) {
+			// must check if key is expired now. Then pretend that we didn't see it and return NotFound
+			// Later backgroud routine, which deletes all expired keys will clean it and add to empty map
+			if kveOnDisk.IsExpired(now) {
+				return nil, ErrNotFound
 			}
 
-			kveOnDisk := blob.Unmarshal(dataBuffer)
-			onDiskKey := kveOnDisk.Key
-
-			if bytes.Equal(key, onDiskKey) {
-				// check if blob is expired
-				// if expire timestamp was in the past
-				// then delete knowledge about this blob from inmemory state
-				// and return NotFound error instead of the value
-				if kveOnDisk.Expire != 0 {
-					now := time.Now()
-					expireTime := time.Unix(int64(kveOnDisk.Expire), 0)
-					if expireTime.Before(now) {
-						seg.rawDeleteOffsetFromMemory(hash, offsetInfo)
-
-						return nil, ErrNotFound
-					}
-				}
-
-				return kveOnDisk.Value, nil
-			}
+			return kveOnDisk.Value, nil
 		}
 	}
 

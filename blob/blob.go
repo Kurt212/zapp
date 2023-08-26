@@ -1,6 +1,9 @@
 package blob
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"time"
+)
 
 const (
 	SizePowerSize = 1 // byte
@@ -55,6 +58,16 @@ func (kve KVE) Marshal() (_ []byte, nextPowerOfTwo int) {
 	buffer.WriteKey(kve.Key)
 
 	return buffer.Bytes(), paddedSize
+}
+
+func (kve KVE) IsExpired(now time.Time) bool {
+	if kve.Expire == 0 {
+		return false
+	}
+
+	expireTime := time.Unix(int64(kve.Expire), 0)
+
+	return expireTime.Before(now)
 }
 
 func Unmarshal(buffer []byte) KVE {
