@@ -26,7 +26,9 @@ var (
 )
 
 type segment struct {
-	file               *os.File
+	file          *os.File
+	fileSizeBytes int64
+
 	mtx                sync.Mutex
 	hashToOffsetMap    map[uint32][]offsetMetaInfo
 	emptySizeToOffsets map[int][]int64
@@ -87,6 +89,8 @@ func (seg *segment) loadDataFromDisk() error {
 		if err != nil {
 			return err
 		}
+
+		seg.fileSizeBytes = segmentFileHeaderSize
 
 		return nil
 	}
@@ -177,6 +181,8 @@ func (seg *segment) loadDataFromDisk() error {
 		currentOffset += int64(blobSize)
 	}
 
+	seg.fileSizeBytes = currentOffset
+
 	return nil
 }
 
@@ -259,17 +265,15 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 	}
 
 	if offset == 0 {
-		var err error
-		offset, err = seg.file.Seek(0, EndWhence)
-		if err != nil {
-			return err // TODO wrap
-		}
+		offset = seg.fileSizeBytes
 	}
 
 	_, err := seg.file.WriteAt(binaryBlob, offset)
 	if err != nil {
 		return err // TODO wrap
 	}
+
+	seg.fileSizeBytes += int64(sizeOfBlob)
 
 	// modify seg.hashToOffsetMap map and save new offset for current hash
 	offsetsWithCurrentHash = append(offsetsWithCurrentHash, offsetMetaInfo{
