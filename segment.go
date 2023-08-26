@@ -79,6 +79,7 @@ func (seg *segment) loadDataFromDisk() error {
 	// this is okay because this may be an new file without any header at all
 	// write header to the disk and stop loading
 	if err == io.EOF {
+		// reuse same buffer to write file header to the new created file
 		copy(fileHeaderBuffer, segmentFileBeginMagicNumbers)
 		fileHeaderBuffer[segmentFileMagicNumbersSize] = segmentFileLayoutVerion1
 
@@ -136,7 +137,7 @@ func (seg *segment) loadDataFromDisk() error {
 		// On disk it will remain expired until someone overwrites it
 		case blobHeader.Expire != 0 && time.Unix(int64(blobHeader.Expire), 0).Before(now):
 			fallthrough
-		case blobHeader.Status == blob.StatusDeleted: // TODO add expire here
+		case blobHeader.Status == blob.StatusDeleted:
 			// this is an empty blob, so just save it to empty sizes map
 			offsetsSlice := seg.emptySizeToOffsets[blobSize]
 
@@ -247,7 +248,9 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 	if ok && len(emptyOffsets) > 0 {
 		offset = emptyOffsets[0]
 
-		// TODO also make if more understandable
+		// Swap the first value with the last value. And decrement slice size by 1.
+		// This is a cheap way to delete item from slice without O(N) operation
+		// TODO also make it more understandable
 		emptyOffsets[0] = emptyOffsets[len(emptyOffsets)-1]
 
 		emptyOffsets = emptyOffsets[:len(emptyOffsets)-1]
