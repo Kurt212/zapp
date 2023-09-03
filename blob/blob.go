@@ -32,6 +32,10 @@ type Header struct {
 	Expire    uint32
 }
 
+func (h Header) Size() int {
+	return 1 << h.SizePower
+}
+
 // KVE stands for Key Value Expire
 type KVE struct {
 	Key    []byte

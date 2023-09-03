@@ -111,77 +111,62 @@ func (seg *segment) loadDataFromDisk() error {
 		return ErrSegmentUnknownVersionNumber
 	}
 
-	// the left data in buffer is garbage
-	// there is extra space allocated in file header for future
-
-	// read blobs from file until EOF
-
-	currentOffset := int64(segmentFileHeaderSize)
-
 	now := time.Now() // to check the expire fields of the items
 
-	for {
-		// first read a constant sized header of a new blob from disk
-		// after header is read, check blob's status in header
-		// expired and deleted blobs will go to empty size to offset map
-		// valid blobs will go to hash to offsets map
-		blobHeaderBuffer := make([]byte, blob.HeaderSize)
+	var lastOffset int64
+	lastOffset, err = seg.visitOnDiskItems(
+		func(file *os.File, currentOffset int64, blobHeader blob.Header) error {
+			blobSize := blobHeader.Size()
 
-		_, err := file.ReadAt(blobHeaderBuffer, currentOffset)
-		if err == io.EOF {
-			break
-		}
+			switch {
+			// If meet an expired blob, then treat it as a deleted blob.
+			// On disk it will remain expired until someone overwrites it
+			case blobHeader.Expire != 0 && time.Unix(int64(blobHeader.Expire), 0).Before(now):
+				fallthrough
+			case blobHeader.Status == blob.StatusDeleted:
+				// this is an empty blob, so just save it to empty sizes map
+				offsetsSlice := seg.emptySizeToOffsets[blobSize]
 
-		blobHeader := blob.UnmarshalHeader(blobHeaderBuffer)
+				offsetsSlice = append(offsetsSlice, currentOffset)
 
-		blobSize := 1 << blobHeader.SizePower
+				seg.emptySizeToOffsets[blobSize] = offsetsSlice
 
-		switch {
-		// If meet an expired blob, then treat it as a deleted blob.
-		// On disk it will remain expired until someone overwrites it
-		case blobHeader.Expire != 0 && time.Unix(int64(blobHeader.Expire), 0).Before(now):
-			fallthrough
-		case blobHeader.Status == blob.StatusDeleted:
-			// this is an empty blob, so just save it to empty sizes map
-			offsetsSlice := seg.emptySizeToOffsets[blobSize]
+			case blobHeader.Status == blob.StatusOK:
+				// blob size is sum of header size and body size
+				bodySize := blobSize - blob.HeaderSize
 
-			offsetsSlice = append(offsetsSlice, currentOffset)
+				// read blob's body from disk
+				blobBodyBuffer := make([]byte, bodySize)
 
-			seg.emptySizeToOffsets[blobSize] = offsetsSlice
+				_, err := file.ReadAt(blobBodyBuffer, currentOffset+blob.HeaderSize)
+				if err != nil {
+					return err
+				}
 
-		case blobHeader.Status == blob.StatusOK:
-			// blob size is sum of header size and body size
-			bodySize := blobSize - blob.HeaderSize
+				kve := blob.UnmarshalBody(blobBodyBuffer, blobHeader)
 
-			// read blob's body from disk
-			blobBodyBuffer := make([]byte, bodySize)
+				// calculate hash from key and store data about this blob in hash to offset map
+				keyHash := hash(kve.Key)
 
-			_, err := file.ReadAt(blobBodyBuffer, currentOffset+blob.HeaderSize)
-			if err != nil {
-				return err
+				hashOffsets := seg.hashToOffsetMap[keyHash]
+
+				hashOffsets = append(hashOffsets, offsetMetaInfo{
+					offset: currentOffset,
+					size:   blobSize,
+				})
+
+				seg.hashToOffsetMap[keyHash] = hashOffsets
+			default:
+				panic(ErrUnknownBlobStatus)
 			}
-
-			kve := blob.UnmarshalBody(blobBodyBuffer, blobHeader)
-
-			// calculate hash from key and store data about this blob in hash to offset map
-			keyHash := hash(kve.Key)
-
-			hashOffsets := seg.hashToOffsetMap[keyHash]
-
-			hashOffsets = append(hashOffsets, offsetMetaInfo{
-				offset: currentOffset,
-				size:   blobSize,
-			})
-
-			seg.hashToOffsetMap[keyHash] = hashOffsets
-		default:
-			panic(ErrUnknownBlobStatus)
-		}
-
-		currentOffset += int64(blobSize)
+			return nil
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("got error when restoring state from disk: %w", err)
 	}
 
-	seg.fileSizeBytes = currentOffset
+	seg.fileSizeBytes = lastOffset
 
 	return nil
 }
