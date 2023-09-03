@@ -269,7 +269,18 @@ func test() {
 	/////////////////////////////////
 	fmt.Println("Testing performance:")
 
+	fmt.Println("Closing old db and opening again...")
+	err = db.Close()
+	if err != nil {
+		panic(err)
+	}
+
 	err = os.RemoveAll("data")
+	if err != nil {
+		panic(err)
+	}
+
+	db, err = zapp.New()
 	if err != nil {
 		panic(err)
 	}
@@ -278,6 +289,7 @@ func test() {
 
 	N := 10_000_000
 	K := 10
+	CPUs := 4
 
 	keysm := make(map[string]bool, N)
 	for len(keysm) < N {
@@ -291,7 +303,7 @@ func test() {
 	lotsa.Output = os.Stdout
 	lotsa.MemUsage = true
 
-	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
+	lotsa.Ops(N, CPUs, func(i, _ int) {
 		b := make([]byte, 8)
 		binary.BigEndian.PutUint64(b, uint64(i))
 		err := db.Set(keys[i], b, 0)
@@ -302,7 +314,7 @@ func test() {
 
 	fmt.Println("Replace the same keys operation:")
 
-	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
+	lotsa.Ops(N, CPUs, func(i, _ int) {
 		b := make([]byte, 8)
 		binary.BigEndian.PutUint64(b, uint64(i)+1)
 		err := db.Set(keys[i], b, 0)
@@ -311,9 +323,10 @@ func test() {
 		}
 	})
 
-	fmt.Println("Get operation:")
+	fmt.Printf("Get operation. Retrieving each of %x keys 10 times:\n", N)
 
-	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
+	lotsa.Ops(N*10, CPUs, func(i, _ int) {
+		i = i % N
 		_, err := db.Get(keys[i])
 		if err != nil {
 			panic(err)
@@ -322,7 +335,7 @@ func test() {
 
 	fmt.Println("Delete operation:")
 
-	lotsa.Ops(N, runtime.NumCPU(), func(i, _ int) {
+	lotsa.Ops(N, CPUs, func(i, _ int) {
 		err := db.Delete(keys[i])
 		if err != nil {
 			panic(err)
