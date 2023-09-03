@@ -14,7 +14,7 @@ func (s *segment) visitOnDiskItems(
 	// this function is too low level
 	// it provides a generic visitor pattern way to read whole segment's file on disk
 	// and do something with each item
-	// if you need to access item's body or key, you must read it from file yourself
+	// if you need to access item's value or key, you must read it from file yourself
 	// by default only item's header is read and passed to the visitor function
 
 	// the beginning of the first item on dist is at fixed offset after file header bytes

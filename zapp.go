@@ -11,9 +11,10 @@ type DB struct {
 }
 
 func New() (*DB, error) {
-	const segmentsCount = 4
+	const segmentsCount = 8
 	const dirName = "data"
 	const syncTime = time.Second
+	const collectExpiredItemsPeriod = 5 * time.Minute
 
 	_, err := os.Stat(dirName)
 	if err != nil {
@@ -31,7 +32,7 @@ func New() (*DB, error) {
 	for i := 0; i < segmentsCount; i++ {
 		segPath := fmt.Sprintf("%s/%d.bin", dirName, i)
 
-		seg, err := newSegment(segPath)
+		seg, err := newSegment(segPath, collectExpiredItemsPeriod)
 		if err != nil {
 			return nil, fmt.Errorf("can not create segment %s: %w", segPath, err)
 		}

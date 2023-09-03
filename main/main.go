@@ -323,7 +323,7 @@ func test() {
 		}
 	})
 
-	fmt.Printf("Get operation. Retrieving each of %x keys 10 times:\n", N)
+	fmt.Printf("Get operation. Retrieving each of %d keys 10 times:\n", N)
 
 	lotsa.Ops(N*10, CPUs, func(i, _ int) {
 		i = i % N
