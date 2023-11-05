@@ -7,6 +7,10 @@ import (
 	"github.com/Kurt212/zapp/blob"
 )
 
+// visitOnDiskItems implements visitor pattern
+// it's very low level and gives the caller the ability to visit each item on disk and call some visitorFunc
+// by default visitor doesn't read item's body, a caller has to read it from file himself using file, current offset and item's header data
+// the function returns last offset in file where it stopped. By default the returned offset is the end of the file.
 func (s *segment) visitOnDiskItems(
 	visitorFunc func(file *os.File, offset int64, header blob.Header) error,
 ) (lastOffset int64, _ error) {

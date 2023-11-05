@@ -14,7 +14,7 @@ func New() (*DB, error) {
 	const segmentsCount = 8
 	const dirName = "data"
 	const syncTime = time.Second
-	const collectExpiredItemsPeriod = 5 * time.Minute
+	const collectExpiredItemsPeriod = 1 * time.Minute
 
 	_, err := os.Stat(dirName)
 	if err != nil {

@@ -26,24 +26,37 @@ var (
 )
 
 type segment struct {
-	file          *os.File
-	fileSizeBytes int64
+	file          *os.File // used to store segment's items data on disk
+	fileSizeBytes int64    // internally count file's size to generate a valid offset for new item if there's no empty offset already existing
 
-	mtx                sync.RWMutex
-	hashToOffsetMap    map[uint32][]offsetMetaInfo
-	emptySizeToOffsets map[int][]int64
-	closedChan         chan struct{}
+	mtx                sync.RWMutex              // mutex is used globally to access this segment. Each operation on segment needs locking. Read operations acquire read lock, write operation acquire write lock
+	hashToOffsetMap    map[uint32][]itemMetaInfo // this is a list of items with the same hash value. Hash collisions sometimes happen and it's needed to deal with them. Although collisions happen quite not often
+	emptySizeToOffsets map[int][]int64           // this is a list of known empty offset of certain sizes. When key is deleted or expired, its offset will be reused later to store new data. That's why segment tracks all empty offsets
+	closedChan         chan struct{}             // this is a generic technic to notify each subprocess assosiated with this segment, that it must be terminated gracefully, because segment is closed and is no longer serving requests
 }
 
-type offsetMetaInfo struct {
-	offset int64 // at which offset in segment's file data is located
-	size   int   // the length of data in current offset in bytes
+type itemMetaInfo struct {
+	// TODO make meta info more compact. Try to store offset, size and expire time in a single int64 or so.
+	// Storing inmemory meta data about on-disk items is necessary.
+	// But segment should try to waste as little RAM as possible so that it can store more keys inside
+	offset     int64     // at which offset in segment's file data is located
+	size       int       // the length of data in current offset in bytes
+	expireTime time.Time // the time at which this offset is no longer must be considered valid. now >= expireTime => item is invalid
+}
+
+func (i itemMetaInfo) IsExpired(now time.Time) bool {
+	if i.expireTime.IsZero() {
+		return false
+	}
+	return i.expireTime.Before(now)
 }
 
 func newSegment(
 	path string,
 	collectExpiredItemsPeriod time.Duration,
 ) (*segment, error) {
+	// open for read and write
+	// create file from scratch if it did not exist
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("can not open file %s: %w", path, err)
@@ -52,7 +65,7 @@ func newSegment(
 	seg := &segment{
 		file:               file,
 		mtx:                sync.RWMutex{},
-		hashToOffsetMap:    make(map[uint32][]offsetMetaInfo),
+		hashToOffsetMap:    make(map[uint32][]itemMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
 		closedChan:         make(chan struct{}),
 	}
@@ -68,6 +81,7 @@ func newSegment(
 	return seg, nil
 }
 
+// loadDataFromDisk reads whole on disk file and restores in memory state
 func (seg *segment) loadDataFromDisk() error {
 	file := seg.file
 
@@ -151,9 +165,10 @@ func (seg *segment) loadDataFromDisk() error {
 
 			hashOffsets := seg.hashToOffsetMap[keyHash]
 
-			hashOffsets = append(hashOffsets, offsetMetaInfo{
-				offset: currentOffset,
-				size:   blobSize,
+			hashOffsets = append(hashOffsets, itemMetaInfo{
+				offset:     currentOffset,
+				size:       blobSize,
+				expireTime: blobHeader.ExpireTime(),
 			})
 
 			seg.hashToOffsetMap[keyHash] = hashOffsets
@@ -178,16 +193,18 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
-	// transfer duration to timestamp only if it's not empty
-	expire := uint32(0)
+	// convert duration to timestamp only if it's not empty
+	expire := time.Time{}
+	expireInt := uint32(0)
 	if ttl.Milliseconds() > 0 {
-		expire = uint32(time.Now().Add(ttl).Unix())
+		expire = time.Now().Add(ttl)
+		expireInt = uint32(expire.Unix())
 	}
 
 	kve := blob.KVE{
 		Key:    key,
 		Value:  value,
-		Expire: expire,
+		Expire: expireInt,
 	}
 
 	// first try to find if there is this key already set
@@ -264,9 +281,10 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 	seg.fileSizeBytes += int64(sizeOfBlob)
 
 	// modify seg.hashToOffsetMap map and save new offset for current hash
-	offsetsWithCurrentHash = append(offsetsWithCurrentHash, offsetMetaInfo{
-		offset: offset,
-		size:   sizeOfBlob,
+	offsetsWithCurrentHash = append(offsetsWithCurrentHash, itemMetaInfo{
+		offset:     offset,
+		size:       sizeOfBlob,
+		expireTime: expire,
 	})
 
 	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
@@ -290,6 +308,11 @@ func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 	now := time.Now()
 
 	for _, offsetInfo := range offsetsWithCurrentHash {
+		// if expired then do not try to read it from disk
+		if offsetInfo.IsExpired(now) {
+			continue
+		}
+
 		// TODO redo read key more effectively
 		dataBuffer := make([]byte, offsetInfo.size)
 
@@ -328,9 +351,16 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	}
 
 	itemIdx := -1
-	var itemOffsetInfo offsetMetaInfo
+	var itemOffsetInfo itemMetaInfo
+
+	now := time.Now()
 
 	for idx, offsetInfo := range offsetsWithCurrentHash {
+		// if expired then do not try to read it from disk
+		if offsetInfo.IsExpired(now) {
+			continue
+		}
+
 		// TODO redo read key more effectively
 		// Don't know how for now. Not sure that two disk reads are better than on big read
 		dataBuffer := make([]byte, offsetInfo.size)
@@ -375,7 +405,7 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 
 // rawDeleteOffsetFromMemory removes offset from offset map and adds this offset to empty map
 func (seg *segment) rawDeleteOffsetFromMemory(
-	hash uint32, offsetInfo offsetMetaInfo,
+	hash uint32, offsetInfo itemMetaInfo,
 ) {
 	// first find this offset in hashToOffsetMap
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
