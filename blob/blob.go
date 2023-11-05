@@ -1,6 +1,9 @@
 package blob
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"time"
+)
 
 const (
 	SizePowerSize = 1 // byte
@@ -29,6 +32,30 @@ type Header struct {
 	Expire    uint32
 }
 
+func (h Header) Size() int {
+	return 1 << h.SizePower
+}
+
+func (h Header) IsExpired(now time.Time) bool {
+	if h.Expire == 0 {
+		return false
+	}
+
+	expireTime := time.Unix(int64(h.Expire), 0)
+
+	return expireTime.Before(now)
+}
+
+func (h Header) ExpireTime() time.Time {
+	// we consider 0 to be a special value
+	// it means there's no expiration time for this item
+	if h.Expire == 0 {
+		return time.Time{}
+	}
+	expireTime := time.Unix(int64(h.Expire), 0)
+	return expireTime
+}
+
 // KVE stands for Key Value Expire
 type KVE struct {
 	Key    []byte
@@ -55,6 +82,16 @@ func (kve KVE) Marshal() (_ []byte, nextPowerOfTwo int) {
 	buffer.WriteKey(kve.Key)
 
 	return buffer.Bytes(), paddedSize
+}
+
+func (kve KVE) IsExpired(now time.Time) bool {
+	if kve.Expire == 0 {
+		return false
+	}
+
+	expireTime := time.Unix(int64(kve.Expire), 0)
+
+	return expireTime.Before(now)
 }
 
 func Unmarshal(buffer []byte) KVE {
