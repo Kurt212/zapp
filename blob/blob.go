@@ -47,6 +47,8 @@ func (h Header) IsExpired(now time.Time) bool {
 }
 
 func (h Header) ExpireTime() time.Time {
+	// we consider 0 to be a special value
+	// it means there's no expiration time for this item
 	if h.Expire == 0 {
 		return time.Time{}
 	}

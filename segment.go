@@ -14,9 +14,9 @@ import (
 const (
 	segmentFileLayoutVerion1 = 1
 
-	segmentFileMagicNumbersSize   = 3 // bytes
-	segmentFileLayoutSize         = 1 // byte
-	segmentFileLayoutReservedSize = 12
+	segmentFileMagicNumbersSize   = 3  // bytes
+	segmentFileLayoutSize         = 1  // byte
+	segmentFileLayoutReservedSize = 12 // bytes
 
 	segmentFileHeaderSize = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize
 )
