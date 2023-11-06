@@ -30,9 +30,10 @@ func New() (*DB, error) {
 
 	var segments []*segment
 	for i := 0; i < segmentsCount; i++ {
-		segPath := fmt.Sprintf("%s/%d.bin", dirName, i)
+		segPath := fmt.Sprintf("%s/%d_data.bin", dirName, i)
+		walPath := fmt.Sprintf("%s/%d_wal.bin", dirName, i)
 
-		seg, err := newSegment(segPath, collectExpiredItemsPeriod)
+		seg, err := newSegment(segPath, walPath, collectExpiredItemsPeriod, syncTime)
 		if err != nil {
 			return nil, fmt.Errorf("can not create segment %s: %w", segPath, err)
 		}
@@ -53,7 +54,14 @@ func (db *DB) Set(key string, data []byte, ttl time.Duration) error {
 	h := hash(byteKey)
 	segment := db.getSegmentForKey(h)
 
-	err := segment.Set(h, byteKey, data, ttl)
+	now := time.Now()
+
+	expireTime := uint32(0)
+	if ttl.Milliseconds() > 0 {
+		expireTime = uint32(now.Add(ttl).Unix())
+	}
+
+	err := segment.Set(h, byteKey, data, expireTime)
 	if err != nil {
 		return err
 	}

@@ -46,16 +46,6 @@ func (h Header) IsExpired(now time.Time) bool {
 	return expireTime.Before(now)
 }
 
-func (h Header) ExpireTime() time.Time {
-	// we consider 0 to be a special value
-	// it means there's no expiration time for this item
-	if h.Expire == 0 {
-		return time.Time{}
-	}
-	expireTime := time.Unix(int64(h.Expire), 0)
-	return expireTime
-}
-
 // KVE stands for Key Value Expire
 type KVE struct {
 	Key    []byte
