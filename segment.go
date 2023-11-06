@@ -218,7 +218,10 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 
 			_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
 			if err != nil {
-				return err // TODO wrap
+				panic(fmt.Errorf(
+					"tried to read item's data at offset %d but got error: %w",
+					offsetInfo.offset, err,
+				))
 			}
 
 			kveOnDisk := blob.Unmarshal(dataBuffer)
@@ -234,7 +237,11 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 				// TODO make sure that if something is broken during this write then nothing bad will happen
 				_, err := seg.file.WriteAt(deletedStatusByte, offsetInfo.offset+blob.StatusOffset)
 				if err != nil {
-					return err // TODO wrap
+					panic(fmt.Errorf(
+						"tried to write delete status at offset %d but got error: %w",
+						offsetInfo.offset+blob.StatusOffset,
+						err,
+					))
 				}
 
 				// Add this offset to list of free empty offsets and delete from hash to offset map
@@ -275,7 +282,11 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 
 	_, err := seg.file.WriteAt(binaryBlob, offset)
 	if err != nil {
-		return err // TODO wrap
+		panic(fmt.Errorf(
+			"tried to write new item's blob at offset %d but got error: %w",
+			offset,
+			err,
+		))
 	}
 
 	seg.fileSizeBytes += int64(sizeOfBlob)
@@ -318,7 +329,11 @@ func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 
 		_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
 		if err != nil {
-			return nil, err // TODO wrap
+			panic(fmt.Errorf(
+				"tried to read item's data at offset %d but got error: %w",
+				offsetInfo.offset,
+				err,
+			))
 		}
 
 		kveOnDisk := blob.Unmarshal(dataBuffer)
@@ -345,7 +360,6 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	defer seg.mtx.Unlock()
 
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
-
 	if !ok {
 		return ErrNotFound
 	}
@@ -367,7 +381,11 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 
 		_, err := seg.file.ReadAt(dataBuffer, offsetInfo.offset)
 		if err != nil {
-			return err // TODO wrap
+			panic(fmt.Errorf(
+				"tried to read item's data at offset %d but got error: %w",
+				offsetInfo.offset,
+				err,
+			))
 		}
 
 		kveOnDisk := blob.Unmarshal(dataBuffer)
@@ -395,7 +413,11 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	// TODO make sure that if something is broken during this write then norhing bad will happen
 	_, err := seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
 	if err != nil {
-		return err // TODO wrap
+		panic(fmt.Errorf(
+			"tried to write deleted status at offset %d but got error: %w",
+			itemOffsetInfo.offset+blob.StatusOffset,
+			err,
+		))
 	}
 
 	seg.rawDeleteOffsetFromMemory(hash, itemOffsetInfo)
@@ -451,13 +473,19 @@ func (seg *segment) Close() error {
 
 	err := seg.file.Sync()
 	if err != nil {
-		return err
+		panic(fmt.Errorf(
+			"tried to sync segment's file on disk when closing segment, but got error: %w",
+			err,
+		))
 	}
 
 	err = seg.file.Close()
 	if err != nil {
-		return err
+		panic(fmt.Errorf(
+			"tried to close segment's file when closing segment, but got error: %w",
+			err,
+		))
 	}
 
-	return err
+	return nil
 }
