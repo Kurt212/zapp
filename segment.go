@@ -51,7 +51,7 @@ type itemMetaInfo struct {
 	// But segment should try to waste as little RAM as possible so that it can store more keys inside
 	offset     int64  // at which offset in segment's file data is located
 	size       int    // the length of data in current offset in bytes
-	expireTime uint32 // the time at which this offset is no longer must be considered valid. now >= expireTime => item is invalid
+	expireTime uint32 // the time at which this offset no longer must be considered valid. now >= expireTime => item is invalid
 }
 
 func (i itemMetaInfo) IsExpired(now time.Time) bool {
@@ -574,6 +574,8 @@ func (seg *segment) rawWriteLastKnownLSN(lastKnownLSN uint64) error {
 	if err != nil {
 		return fmt.Errorf("got error when writing last known lasn to segment's file: %w", err)
 	}
+
+	seg.lastKnownLSN = lastKnownLSN
 
 	return nil
 }
