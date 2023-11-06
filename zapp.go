@@ -13,7 +13,7 @@ type DB struct {
 func New() (*DB, error) {
 	const segmentsCount = 8
 	const dirName = "data"
-	const syncTime = time.Second
+	const syncTime = 1 * time.Minute
 	const collectExpiredItemsPeriod = 1 * time.Minute
 
 	_, err := os.Stat(dirName)

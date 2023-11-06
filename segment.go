@@ -23,6 +23,8 @@ const (
 	segmentFileLayoutReservedSize = 12 // bytes
 	segmentFileLastKnownLSNSize   = 8  // bytes
 
+	segmentFileLastKnownLSNOffset = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize
+
 	segmentFileHeaderSize = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize + segmentFileLastKnownLSNSize
 )
 
@@ -146,7 +148,7 @@ func (seg *segment) loadDataFromDisk() error {
 		lastLSNBuffer := make([]byte, 0, segmentFileLastKnownLSNSize)
 		lastLSNBuffer = binary.BigEndian.AppendUint64(lastLSNBuffer, segmentFileDefaultLastKnownLSN)
 
-		copy(fileHeaderBuffer[segmentFileMagicNumbersSize+segmentFileLayoutSize+segmentFileLayoutReservedSize:], lastLSNBuffer)
+		copy(fileHeaderBuffer[segmentFileLastKnownLSNOffset:], lastLSNBuffer)
 
 		_, err = file.WriteAt(fileHeaderBuffer, fileBeginOffset)
 		if err != nil {
@@ -177,7 +179,7 @@ func (seg *segment) loadDataFromDisk() error {
 	// here may be some other reads for data from reserved bytes in header
 
 	// initialize lastKnownLSN from header
-	lastKnownLSNBuffer := fileHeaderBuffer[segmentFileMagicNumbersSize+segmentFileLayoutSize+segmentFileLayoutReservedSize:]
+	lastKnownLSNBuffer := fileHeaderBuffer[segmentFileLastKnownLSNOffset:]
 	seg.lastKnownLSN = binary.BigEndian.Uint64(lastKnownLSNBuffer)
 
 	now := time.Now() // to check the expire fields of the items
@@ -248,6 +250,16 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, expire uint32) er
 	return seg.rawSet(hash, key, value, expire)
 }
 func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32) error {
+	lsn, err := seg.wal.AppendSet(key, value, expire)
+	if err != nil {
+		panic(fmt.Errorf("got error when append set action to WAL: %w", err))
+	}
+
+	err = seg.rawWriteLastKnownLSN(lsn)
+	if err != nil {
+		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+	}
+
 	// convert duration to timestamp only if it's not empty
 	kve := blob.KVE{
 		Key:    key,
@@ -282,7 +294,6 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 				// write on disk that data is deleted
 				deletedStatusByte := []byte{blob.StatusDeleted}
 
-				// TODO make sure that if something is broken during this write then nothing bad will happen
 				_, err := seg.file.WriteAt(deletedStatusByte, offsetInfo.offset+blob.StatusOffset)
 				if err != nil {
 					panic(fmt.Errorf(
@@ -328,7 +339,7 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 		offset = seg.fileSizeBytes
 	}
 
-	_, err := seg.file.WriteAt(binaryBlob, offset)
+	_, err = seg.file.WriteAt(binaryBlob, offset)
 	if err != nil {
 		panic(fmt.Errorf(
 			"tried to write new item's blob at offset %d but got error: %w",
@@ -415,6 +426,16 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 }
 
 func (seg *segment) rawDelete(hash uint32, key []byte) error {
+	lsn, err := seg.wal.AppendDel(key)
+	if err != nil {
+		panic(fmt.Errorf("got error when append del action to WAL: %w", err))
+	}
+
+	err = seg.rawWriteLastKnownLSN(lsn)
+	if err != nil {
+		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+	}
+
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
 	if !ok {
 		return ErrNotFound
@@ -466,8 +487,7 @@ func (seg *segment) rawDelete(hash uint32, key []byte) error {
 	// write on disk that data is deleted
 	deletedStatusByte := []byte{blob.StatusDeleted}
 
-	// TODO make sure that if something is broken during this write then norhing bad will happen
-	_, err := seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
+	_, err = seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
 	if err != nil {
 		panic(fmt.Errorf(
 			"tried to write deleted status at offset %d but got error: %w",
@@ -541,6 +561,18 @@ func (seg *segment) Close() error {
 			"tried to close segment's file when closing segment, but got error: %w",
 			err,
 		))
+	}
+
+	return nil
+}
+
+func (seg *segment) rawWriteLastKnownLSN(lastKnownLSN uint64) error {
+	var buffer []byte
+	buffer = binary.BigEndian.AppendUint64(buffer, lastKnownLSN)
+
+	_, err := seg.file.WriteAt(buffer, segmentFileLastKnownLSNOffset)
+	if err != nil {
+		return fmt.Errorf("got error when writing last known lasn to segment's file: %w", err)
 	}
 
 	return nil
