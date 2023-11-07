@@ -312,15 +312,20 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 		// Swap the first value with the last value. And decrement slice size by 1.
 		// This is a cheap way to delete item from slice without O(N) operation
 		// TODO also make it more understandable
-		emptyOffsets[0] = emptyOffsets[len(emptyOffsets)-1]
-
-		emptyOffsets = emptyOffsets[:len(emptyOffsets)-1]
+		if len(emptyOffsets) > 1 {
+			emptyOffsets[0] = emptyOffsets[len(emptyOffsets)-1]
+			emptyOffsets = emptyOffsets[:len(emptyOffsets)-1]
+		} else {
+			emptyOffsets = emptyOffsets[:0]
+		}
 
 		seg.emptySizeToOffsets[sizeOfBlob] = emptyOffsets
 	}
 
+	appendAtTheEnd := false
 	if offset == 0 {
 		offset = seg.fileSizeBytes
+		appendAtTheEnd = true
 	}
 
 	_, err := seg.file.WriteAt(binaryBlob, offset)
@@ -332,7 +337,15 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 		))
 	}
 
-	seg.fileSizeBytes += int64(sizeOfBlob)
+	if appendAtTheEnd {
+		seg.fileSizeBytes += int64(sizeOfBlob)
+	}
+
+	// could be modified since last retrieval so obtain it one more time
+	offsetsWithCurrentHash, ok = seg.hashToOffsetMap[hash]
+	if !ok {
+		offsetsWithCurrentHash = nil
+	}
 
 	// modify seg.hashToOffsetMap map and save new offset for current hash
 	offsetsWithCurrentHash = append(offsetsWithCurrentHash, itemMetaInfo{
@@ -518,9 +531,12 @@ func (seg *segment) rawDeleteOffsetFromMemory(
 	// Just replace duplicate with the last item and then crop the slice
 	currentLength := len(offsetsWithCurrentHash)
 
-	offsetsWithCurrentHash[itemIdx] = offsetsWithCurrentHash[currentLength-1]
-
-	offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
+	if len(offsetsWithCurrentHash) > 1 {
+		offsetsWithCurrentHash[itemIdx] = offsetsWithCurrentHash[currentLength-1]
+		offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
+	} else {
+		offsetsWithCurrentHash = offsetsWithCurrentHash[:0]
+	}
 
 	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
 }
