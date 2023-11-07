@@ -62,20 +62,13 @@ func (i itemMetaInfo) IsExpired(now time.Time) bool {
 }
 
 func newSegment(
-	path string,
-	walPath string,
+	dataFile *os.File,
+	walFile *os.File,
 	collectExpiredItemsPeriod time.Duration,
 	syncFileDuration time.Duration,
 ) (*segment, error) {
-	// open for read and write
-	// create file from scratch if it did not exist
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("can not open file %s: %w", path, err)
-	}
-
 	seg := &segment{
-		file:               file,
+		file:               dataFile,
 		mtx:                sync.RWMutex{},
 		hashToOffsetMap:    make(map[uint32][]itemMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
@@ -85,18 +78,9 @@ func newSegment(
 
 	// read whole file and make fill hash to offset map and empty size to offset map
 	// also reads lastKnownLSN from file
-	err = seg.loadDataFromDisk()
+	err := seg.loadDataFromDisk()
 	if err != nil {
 		return nil, fmt.Errorf("can not load data from disk: %w", err)
-	}
-
-	// wal should be readable and writable
-	// if wal file doesn't exist, then it will be created
-	// wal file is append only
-	// writes to wal file should be synchronous! This is extremely important.
-	walFile, err := os.OpenFile(walPath, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("can not open wal file %s: %w", walPath, err)
 	}
 
 	walManager, unaplliedActions, err := wal.CreateWalAndReturnNotAppliedActions(walFile, seg.lastKnownLSN)
@@ -247,9 +231,6 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, expire uint32) er
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
-	return seg.rawSet(hash, key, value, expire)
-}
-func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32) error {
 	lsn, err := seg.wal.AppendSet(key, value, expire)
 	if err != nil {
 		panic(fmt.Errorf("got error when append set action to WAL: %w", err))
@@ -260,6 +241,9 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
 	}
 
+	return seg.rawSet(hash, key, value, expire)
+}
+func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32) error {
 	// convert duration to timestamp only if it's not empty
 	kve := blob.KVE{
 		Key:    key,
@@ -339,7 +323,7 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 		offset = seg.fileSizeBytes
 	}
 
-	_, err = seg.file.WriteAt(binaryBlob, offset)
+	_, err := seg.file.WriteAt(binaryBlob, offset)
 	if err != nil {
 		panic(fmt.Errorf(
 			"tried to write new item's blob at offset %d but got error: %w",
@@ -422,10 +406,6 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
-	return seg.rawDelete(hash, key)
-}
-
-func (seg *segment) rawDelete(hash uint32, key []byte) error {
 	lsn, err := seg.wal.AppendDel(key)
 	if err != nil {
 		panic(fmt.Errorf("got error when append del action to WAL: %w", err))
@@ -436,6 +416,10 @@ func (seg *segment) rawDelete(hash uint32, key []byte) error {
 		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
 	}
 
+	return seg.rawDelete(hash, key)
+}
+
+func (seg *segment) rawDelete(hash uint32, key []byte) error {
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
 	if !ok {
 		return ErrNotFound
@@ -487,7 +471,7 @@ func (seg *segment) rawDelete(hash uint32, key []byte) error {
 	// write on disk that data is deleted
 	deletedStatusByte := []byte{blob.StatusDeleted}
 
-	_, err = seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
+	_, err := seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
 	if err != nil {
 		panic(fmt.Errorf(
 			"tried to write deleted status at offset %d but got error: %w",

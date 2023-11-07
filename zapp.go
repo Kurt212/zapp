@@ -33,7 +33,23 @@ func New() (*DB, error) {
 		segPath := fmt.Sprintf("%s/%d_data.bin", dirName, i)
 		walPath := fmt.Sprintf("%s/%d_wal.bin", dirName, i)
 
-		seg, err := newSegment(segPath, walPath, collectExpiredItemsPeriod, syncTime)
+		// open for read and write
+		// create file from scratch if it did not exist
+		file, err := os.OpenFile(segPath, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("can not open file %s: %w", segPath, err)
+		}
+
+		// wal should be readable and writable
+		// if wal file doesn't exist, then it will be created
+		// wal file is append only
+		// writes to wal file should be synchronous! This is extremely important.
+		walFile, err := os.OpenFile(walPath, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("can not open wal file %s: %w", walPath, err)
+		}
+
+		seg, err := newSegment(file, walFile, collectExpiredItemsPeriod, syncTime)
 		if err != nil {
 			return nil, fmt.Errorf("can not create segment %s: %w", segPath, err)
 		}
