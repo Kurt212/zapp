@@ -51,11 +51,26 @@ func CreateWalAndReturnNotAppliedActions(file *os.File, lastAppliedLSN uint64) (
 	return w, actions, nil
 }
 
+func (w *W) LastLSN() uint64 {
+	w.lock.Lock()
+	defer w.lock.Unlock()
+
+	return w.lastLSN
+}
+
 // Checkpoint for now checkpointing WAL means it's safe to delete all entries from the file
 // Checkpoint mush be called only after the segment's file is persisted to the disk fully
 // Otherwise some data changes can be lost in case of software or hardware faults
 func (w *W) Checkpoint() error {
+	w.lock.Lock()
+	defer w.lock.Unlock()
+
 	err := w.file.Truncate(0)
+	if err != nil {
+		return err
+	}
+
+	err = w.file.Sync()
 	if err != nil {
 		return err
 	}

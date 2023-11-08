@@ -14,21 +14,30 @@ type v struct {
 	lsn    uint64
 }
 
+type kv struct {
+	key []byte
+	v
+}
+
 func makeSegment(writer io.Writer, data map[string]v) error {
-	type kv struct {
-		key []byte
-		v
-	}
-
-	lastLSN := uint64(0)
-
 	var orderedData []kv
 	for k, v := range data {
 		orderedData = append(orderedData, kv{
 			key: []byte(k),
 			v:   v,
 		})
-		lastLSN = v.lsn
+	}
+
+	return makeSegmentOrdered(writer, orderedData)
+}
+
+func makeSegmentOrdered(writer io.Writer, orderedData []kv) error {
+	lastLSN := uint64(0)
+
+	for _, itm := range orderedData {
+		if itm.lsn > lastLSN {
+			lastLSN = itm.lsn
+		}
 	}
 
 	var headerBuffer []byte

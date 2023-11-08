@@ -99,7 +99,7 @@ func newSegment(
 		// after re applying actions from wal,
 		// need to run fsync to make a new checkpoint
 		// and sync segment's dirty file to disk
-		seg.fsync()
+		seg.rawFsync()
 	}
 
 	go seg.fsyncLoop(syncFileDuration)
@@ -545,17 +545,11 @@ func (seg *segment) Close() error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
+	seg.rawFsync()
+
 	close(seg.closedChan)
 
-	err := seg.file.Sync()
-	if err != nil {
-		panic(fmt.Errorf(
-			"tried to sync segment's file on disk when closing segment, but got error: %w",
-			err,
-		))
-	}
-
-	err = seg.file.Close()
+	err := seg.file.Close()
 	if err != nil {
 		panic(fmt.Errorf(
 			"tried to close segment's file when closing segment, but got error: %w",

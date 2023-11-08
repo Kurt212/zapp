@@ -31,6 +31,10 @@ func (s *segment) fsync() {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
+	s.rawFsync()
+}
+
+func (s *segment) rawFsync() {
 	err := s.file.Sync()
 	if err != nil {
 		panic(fmt.Errorf("tried to fsync segment's file, but got error: %w", err))

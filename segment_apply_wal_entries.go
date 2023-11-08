@@ -48,5 +48,10 @@ func (seg *segment) performUnappliedWALActions(actions []wal.Action) error {
 		seg.lastKnownLSN = lsn
 	}
 
+	err := seg.rawWriteLastKnownLSN(seg.lastKnownLSN)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
