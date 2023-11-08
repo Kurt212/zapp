@@ -3,11 +3,13 @@ package zapp
 import "time"
 
 type Params struct {
-	segmentsNum         int
-	dataPath            string
-	syncPeriod          time.Duration
-	removeExpiredPeriod time.Duration
-	useWAL              bool
+	segmentsNum           int
+	dataPath              string
+	syncPeriod            time.Duration
+	syncPeriodDeltaMax    time.Duration
+	removeExpiredPeriod   time.Duration
+	removeExpiredDeltaMax time.Duration
+	useWAL                bool
 }
 
 type ParamsBuilder struct {
@@ -31,11 +33,17 @@ func (pb *ParamsBuilder) SegmentsNum(number int) *ParamsBuilder {
 	return pb
 }
 
+// SyncPeriod sets the period time for scheduling a background process of
+// periodic calling fsync on data file and creating checkpoint in WAL.
+// 0 value disables the background process running
 func (pb *ParamsBuilder) SyncPeriod(period time.Duration) *ParamsBuilder {
 	pb.params.syncPeriod = period
 	return pb
 }
 
+// RemoveExpiredPeriod sets the period time for scheduling a background process of
+// periodic marking expired items as deleted in inmemory state.
+// 0 value disables the background process running
 func (pb *ParamsBuilder) RemoveExpiredPeriod(period time.Duration) *ParamsBuilder {
 	pb.params.removeExpiredPeriod = period
 	return pb

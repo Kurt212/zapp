@@ -11,7 +11,7 @@ import (
 type v struct {
 	value  []byte
 	expire uint32
-	lsn    uint64
+	lsn    uint64 // optional. is you don't use WAL, then it means nothing
 }
 
 type kv struct {

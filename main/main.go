@@ -54,7 +54,8 @@ func newZapp() *zapp.DB {
 	b := zapp.NewParamsBuilder("./data").
 		SegmentsNum(8).
 		SyncPeriod(time.Minute).
-		RemoveExpiredPeriod(time.Minute)
+		RemoveExpiredPeriod(time.Minute).
+		UseWAL(true)
 
 	z, err := zapp.New(b.Params())
 	if err != nil {

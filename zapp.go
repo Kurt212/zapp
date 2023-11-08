@@ -32,7 +32,6 @@ func New(params Params) (*DB, error) {
 	var segments []*segment
 	for i := 0; i < params.segmentsNum; i++ {
 		segPath := fmt.Sprintf("%s/%d_data.bin", params.dataPath, i)
-		walPath := fmt.Sprintf("%s/%d_wal.bin", params.dataPath, i)
 
 		// open for read and write
 		// create file from scratch if it did not exist
@@ -41,13 +40,17 @@ func New(params Params) (*DB, error) {
 			return nil, fmt.Errorf("can not open file %s: %w", segPath, err)
 		}
 
-		// wal should be readable and writable
-		// if wal file doesn't exist, then it will be created
-		// wal file is append only
-		// writes to wal file should be synchronous! This is extremely important.
-		walFile, err := os.OpenFile(walPath, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("can not open wal file %s: %w", walPath, err)
+		var walFile *os.File // nil by default. nil => do not use wal logic
+		if params.useWAL {
+			walPath := fmt.Sprintf("%s/%d_wal.bin", params.dataPath, i)
+			// wal should be readable and writable
+			// if wal file doesn't exist, then it will be created
+			// wal file is append only
+			// writes to wal file should be synchronous! This is extremely important.
+			walFile, err = os.OpenFile(walPath, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0644)
+			if err != nil {
+				return nil, fmt.Errorf("can not open wal file %s: %w", walPath, err)
+			}
 		}
 
 		seg, err := newSegment(file, walFile, params.removeExpiredPeriod, params.syncPeriod)

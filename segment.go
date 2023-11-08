@@ -41,7 +41,7 @@ type segment struct {
 	emptySizeToOffsets map[int][]int64           // this is a list of known empty offset of certain sizes. When key is deleted or expired, its offset will be reused later to store new data. That's why segment tracks all empty offsets
 	closedChan         chan struct{}             // this is a generic technic to notify each subprocess assosiated with this segment, that it must be terminated gracefully, because segment is closed and is no longer serving requests
 
-	wal          *wal.W // wal is an object to work with write ahead log, generate new log entries and get log sequence numbers (LSNs)
+	wal          *wal.W // optional. wal is an object to work with write ahead log, generate new log entries and get log sequence numbers (LSNs). User may not want to work with WAL and increase write-operations throughput.
 	lastKnownLSN uint64 // lastKnownLSN is the last known wal's LSN appliend to this segment
 }
 
@@ -73,7 +73,7 @@ func newSegment(
 		hashToOffsetMap:    make(map[uint32][]itemMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
 		closedChan:         make(chan struct{}),
-		wal:                nil, // wal will be initiated after reading exitint file from disk
+		wal:                nil, // wal will be initiated after reading file from disk
 	}
 
 	// read whole file and make fill hash to offset map and empty size to offset map
@@ -83,27 +83,34 @@ func newSegment(
 		return nil, fmt.Errorf("can not load data from disk: %w", err)
 	}
 
-	walManager, unaplliedActions, err := wal.CreateWalAndReturnNotAppliedActions(walFile, seg.lastKnownLSN)
-	if err != nil {
-		return nil, err
-	}
-
-	seg.wal = walManager
-
-	if len(unaplliedActions) > 0 {
-		err = seg.performUnappliedWALActions(unaplliedActions)
+	if walFile != nil {
+		walManager, unaplliedActions, err := wal.CreateWalAndReturnNotAppliedActions(walFile, seg.lastKnownLSN)
 		if err != nil {
-			return nil, fmt.Errorf("got error when performing all unapplied actions from wal file: %w", err)
+			return nil, err
 		}
 
-		// after re applying actions from wal,
-		// need to run fsync to make a new checkpoint
-		// and sync segment's dirty file to disk
-		seg.rawFsync()
+		seg.wal = walManager
+
+		if len(unaplliedActions) > 0 {
+			err = seg.performUnappliedWALActions(unaplliedActions)
+			if err != nil {
+				return nil, fmt.Errorf("got error when performing all unapplied actions from wal file: %w", err)
+			}
+
+			// after re applying actions from wal,
+			// need to run fsync to make a new checkpoint
+			// and sync segment's dirty file to disk
+			seg.rawFsync()
+		}
 	}
 
-	go seg.fsyncLoop(syncFileDuration)
-	go seg.collectExpiredItemsLoop(collectExpiredItemsPeriod)
+	if syncFileDuration > 0 {
+		go seg.fsyncLoop(syncFileDuration)
+	}
+
+	if collectExpiredItemsPeriod > 0 {
+		go seg.collectExpiredItemsLoop(collectExpiredItemsPeriod)
+	}
 
 	return seg, nil
 }
@@ -231,14 +238,18 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, expire uint32) er
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
-	lsn, err := seg.wal.AppendSet(key, value, expire)
-	if err != nil {
-		panic(fmt.Errorf("got error when append set action to WAL: %w", err))
-	}
+	// if wal manager field is nil, then do nothing with the WAL logic and work without it
+	// this increases performace dramatically
+	if seg.wal != nil {
+		lsn, err := seg.wal.AppendSet(key, value, expire)
+		if err != nil {
+			panic(fmt.Errorf("got error when append set action to WAL: %w", err))
+		}
 
-	err = seg.rawWriteLastKnownLSN(lsn)
-	if err != nil {
-		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+		err = seg.rawWriteLastKnownLSN(lsn)
+		if err != nil {
+			panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+		}
 	}
 
 	return seg.rawSet(hash, key, value, expire)
@@ -419,14 +430,18 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
-	lsn, err := seg.wal.AppendDel(key)
-	if err != nil {
-		panic(fmt.Errorf("got error when append del action to WAL: %w", err))
-	}
+	// if wal manager field is nil, then do nothing with the WAL logic and work without it
+	// this increases performace dramatically
+	if seg.wal != nil {
+		lsn, err := seg.wal.AppendDel(key)
+		if err != nil {
+			panic(fmt.Errorf("got error when append del action to WAL: %w", err))
+		}
 
-	err = seg.rawWriteLastKnownLSN(lsn)
-	if err != nil {
-		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+		err = seg.rawWriteLastKnownLSN(lsn)
+		if err != nil {
+			panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+		}
 	}
 
 	return seg.rawDelete(hash, key)

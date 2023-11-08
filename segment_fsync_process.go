@@ -6,6 +6,11 @@ import (
 )
 
 func (s *segment) fsyncLoop(syncInterval time.Duration) {
+	// zero interval means user wants not to have any sync process at all
+	if syncInterval == 0 {
+		return
+	}
+
 	ticker := time.NewTicker(syncInterval)
 
 	for {
@@ -40,8 +45,11 @@ func (s *segment) rawFsync() {
 		panic(fmt.Errorf("tried to fsync segment's file, but got error: %w", err))
 	}
 
-	err = s.wal.Checkpoint()
-	if err != nil {
-		panic(fmt.Errorf("can not create new checkpoint in WAL: %w", err))
+	// we support working without WAL at all, so this is okay
+	if s.wal != nil {
+		err = s.wal.Checkpoint()
+		if err != nil {
+			panic(fmt.Errorf("can not create new checkpoint in WAL: %w", err))
+		}
 	}
 }
