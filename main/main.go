@@ -49,16 +49,28 @@ func main() {
 	}
 
 }
+
+func newZapp() *zapp.DB {
+	b := zapp.NewParamsBuilder("./data").
+		SegmentsNum(8).
+		SyncPeriod(time.Minute).
+		RemoveExpiredPeriod(time.Minute)
+
+	z, err := zapp.New(b.Params())
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	return z
+}
+
 func test() {
 	err := os.RemoveAll("data")
 	if err != nil {
 		panic(err)
 	}
 
-	db, err := zapp.New()
-	if err != nil {
-		log.Fatalln(err)
-	}
+	db := newZapp()
 
 	seed := int64(1570109110136449000)
 	rng := rand.New(rand.NewSource(seed))
@@ -161,10 +173,7 @@ func test() {
 		panic(err)
 	}
 
-	db, err = zapp.New()
-	if err != nil {
-		panic(err)
-	}
+	db = newZapp()
 
 	fmt.Println("Filling some data...")
 
@@ -184,10 +193,7 @@ func test() {
 		panic(err)
 	}
 
-	db, err = zapp.New()
-	if err != nil {
-		panic(err)
-	}
+	db = newZapp()
 
 	fmt.Println("Checking data...")
 
@@ -251,10 +257,7 @@ func test() {
 		panic(err)
 	}
 
-	db, err = zapp.New()
-	if err != nil {
-		panic(err)
-	}
+	db = newZapp()
 
 	for i := 0; i < 100; i++ {
 		kv := testData[i]
@@ -280,10 +283,7 @@ func test() {
 		panic(err)
 	}
 
-	db, err = zapp.New()
-	if err != nil {
-		panic(err)
-	}
+	db = newZapp()
 
 	fmt.Println("Set new keys operation:")
 
