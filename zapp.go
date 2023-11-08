@@ -2,6 +2,7 @@ package zapp
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"time"
 )
@@ -53,7 +54,19 @@ func New(params Params) (*DB, error) {
 			}
 		}
 
-		seg, err := newSegment(file, walFile, params.removeExpiredPeriod, params.syncPeriod)
+		// randomize syncPeriod so that each segment will process expired items with random delay depending on params
+		syncPeriod := time.Duration(0)
+		if params.removeExpiredPeriod > 0 {
+			syncPeriod = generateNewPeriodWithRandomDelta(params.syncPeriod, params.syncPeriodDeltaMax)
+		}
+
+		// randomize expiredPeriod so that each segment will process expired items with random delay depending on params
+		expiredPeriod := time.Duration(0)
+		if params.removeExpiredPeriod > 0 {
+			expiredPeriod = generateNewPeriodWithRandomDelta(params.removeExpiredPeriod, params.removeExpiredDeltaMax)
+		}
+
+		seg, err := newSegment(file, walFile, expiredPeriod, syncPeriod)
 		if err != nil {
 			return nil, fmt.Errorf("can not create segment %s: %w", segPath, err)
 		}
@@ -138,4 +151,9 @@ func (db *DB) getSegmentForKey(hash uint32) *segment {
 
 func getSegmentIndex(hash uint32, segmentsCount int) int {
 	return int(hash % uint32(segmentsCount))
+}
+
+func generateNewPeriodWithRandomDelta(period time.Duration, maxDelta time.Duration) time.Duration {
+	delta := time.Duration(rand.Int63n(int64(maxDelta)))
+	return period + delta
 }

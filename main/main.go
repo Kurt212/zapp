@@ -54,7 +54,9 @@ func newZapp() *zapp.DB {
 	b := zapp.NewParamsBuilder("./data").
 		SegmentsNum(8).
 		SyncPeriod(time.Minute).
+		SyncPeriodDeltaMax(time.Second * 10). // for randomness in sync periods
 		RemoveExpiredPeriod(time.Minute).
+		RemoveExpiredDeltaMax(time.Second * 10). // for randomness in expire checks
 		UseWAL(true)
 
 	z, err := zapp.New(b.Params())
