@@ -171,6 +171,66 @@ func TestOpenFromExistingSegmentFiles(t *testing.T) {
 		require.Equal(t, []byte("value4"), value)
 	})
 
+	t.Run("restore from wal 2 sets with empty datafile but one is expired", func(t *testing.T) {
+		dir := os.TempDir()
+		dataFile, err := os.CreateTemp(dir, "*")
+
+		require.NoError(t, err)
+
+		defer os.Remove(dataFile.Name())
+		defer dataFile.Close()
+
+		walFile, err := os.CreateTemp(dir, "*")
+
+		require.NoError(t, err)
+
+		defer os.Remove(walFile.Name())
+		defer walFile.Close()
+
+		now := time.Now()
+		expiredTime := now.Add(-time.Second) // expired for sure
+		notExpiredTime := now.Add(time.Hour) // not expired for sure
+
+		walActions := []wal.Action{
+			{
+				Type:   wal.ActionTypeSet,
+				Key:    []byte("key1"),
+				Value:  []byte("value1"),
+				Expire: uint32(expiredTime.Unix()),
+				LSN:    1,
+			},
+			{
+				Type:   wal.ActionTypeSet,
+				Key:    []byte("key2"),
+				Value:  []byte("value2"),
+				Expire: uint32(notExpiredTime.Unix()),
+				LSN:    2,
+			},
+		}
+
+		err = makeWAL(walFile, walActions)
+		require.NoError(t, err)
+
+		segment, err := newSegment(
+			dataFile,
+			walFile,
+			time.Hour,
+			time.Hour,
+		)
+		require.NoError(t, err)
+
+		require.Equal(t, uint64(2), segment.lastKnownLSN)
+		require.Equal(t, uint64(2), segment.wal.LastLSN())
+
+		key := []byte("key1")
+		_, err = segment.Get(hash(key), key)
+		require.ErrorIs(t, err, ErrNotFound)
+
+		key = []byte("key2")
+		_, err = segment.Get(hash(key), key)
+		require.NoError(t, err)
+	})
+
 	t.Run("restore from wal 2 sets then 1 del", func(t *testing.T) {
 		dir := os.TempDir()
 		dataFile, err := os.CreateTemp(dir, "*")
