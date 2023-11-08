@@ -13,7 +13,7 @@ type DB struct {
 func New() (*DB, error) {
 	const segmentsCount = 8
 	const dirName = "data"
-	const syncTime = time.Second
+	const syncTime = 1 * time.Minute
 	const collectExpiredItemsPeriod = 1 * time.Minute
 
 	_, err := os.Stat(dirName)
@@ -30,9 +30,26 @@ func New() (*DB, error) {
 
 	var segments []*segment
 	for i := 0; i < segmentsCount; i++ {
-		segPath := fmt.Sprintf("%s/%d.bin", dirName, i)
+		segPath := fmt.Sprintf("%s/%d_data.bin", dirName, i)
+		walPath := fmt.Sprintf("%s/%d_wal.bin", dirName, i)
 
-		seg, err := newSegment(segPath, collectExpiredItemsPeriod)
+		// open for read and write
+		// create file from scratch if it did not exist
+		file, err := os.OpenFile(segPath, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("can not open file %s: %w", segPath, err)
+		}
+
+		// wal should be readable and writable
+		// if wal file doesn't exist, then it will be created
+		// wal file is append only
+		// writes to wal file should be synchronous! This is extremely important.
+		walFile, err := os.OpenFile(walPath, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("can not open wal file %s: %w", walPath, err)
+		}
+
+		seg, err := newSegment(file, walFile, collectExpiredItemsPeriod, syncTime)
 		if err != nil {
 			return nil, fmt.Errorf("can not create segment %s: %w", segPath, err)
 		}
@@ -53,7 +70,14 @@ func (db *DB) Set(key string, data []byte, ttl time.Duration) error {
 	h := hash(byteKey)
 	segment := db.getSegmentForKey(h)
 
-	err := segment.Set(h, byteKey, data, ttl)
+	now := time.Now()
+
+	expireTime := uint32(0)
+	if ttl.Milliseconds() > 0 {
+		expireTime = uint32(now.Add(ttl).Unix())
+	}
+
+	err := segment.Set(h, byteKey, data, expireTime)
 	if err != nil {
 		return err
 	}

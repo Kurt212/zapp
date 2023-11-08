@@ -28,6 +28,10 @@ func (seg *segment) collectExpiredItems() {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
+	seg.rawCollectExpiredItems()
+}
+
+func (seg *segment) rawCollectExpiredItems() {
 	now := time.Now()
 
 	for hash, offsets := range seg.hashToOffsetMap {

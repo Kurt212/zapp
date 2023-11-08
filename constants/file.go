@@ -1,4 +1,4 @@
-package zapp
+package constants
 
 const (
 	OriginWhence          = 0

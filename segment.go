@@ -2,6 +2,7 @@ package zapp
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -9,16 +10,22 @@ import (
 	"time"
 
 	"github.com/Kurt212/zapp/blob"
+	"github.com/Kurt212/zapp/constants"
+	"github.com/Kurt212/zapp/wal"
 )
 
 const (
-	segmentFileLayoutVerion1 = 1
+	segmentFileLayoutVerion1       = 1
+	segmentFileDefaultLastKnownLSN = 0
 
 	segmentFileMagicNumbersSize   = 3  // bytes
 	segmentFileLayoutSize         = 1  // byte
 	segmentFileLayoutReservedSize = 12 // bytes
+	segmentFileLastKnownLSNSize   = 8  // bytes
 
-	segmentFileHeaderSize = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize
+	segmentFileLastKnownLSNOffset = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize
+
+	segmentFileHeaderSize = segmentFileMagicNumbersSize + segmentFileLayoutSize + segmentFileLayoutReservedSize + segmentFileLastKnownLSNSize
 )
 
 var (
@@ -33,49 +40,69 @@ type segment struct {
 	hashToOffsetMap    map[uint32][]itemMetaInfo // this is a list of items with the same hash value. Hash collisions sometimes happen and it's needed to deal with them. Although collisions happen quite not often
 	emptySizeToOffsets map[int][]int64           // this is a list of known empty offset of certain sizes. When key is deleted or expired, its offset will be reused later to store new data. That's why segment tracks all empty offsets
 	closedChan         chan struct{}             // this is a generic technic to notify each subprocess assosiated with this segment, that it must be terminated gracefully, because segment is closed and is no longer serving requests
+
+	wal          *wal.W // wal is an object to work with write ahead log, generate new log entries and get log sequence numbers (LSNs)
+	lastKnownLSN uint64 // lastKnownLSN is the last known wal's LSN appliend to this segment
 }
 
 type itemMetaInfo struct {
 	// TODO make meta info more compact. Try to store offset, size and expire time in a single int64 or so.
 	// Storing inmemory meta data about on-disk items is necessary.
 	// But segment should try to waste as little RAM as possible so that it can store more keys inside
-	offset     int64     // at which offset in segment's file data is located
-	size       int       // the length of data in current offset in bytes
-	expireTime time.Time // the time at which this offset is no longer must be considered valid. now >= expireTime => item is invalid
+	offset     int64  // at which offset in segment's file data is located
+	size       int    // the length of data in current offset in bytes
+	expireTime uint32 // the time at which this offset no longer must be considered valid. now >= expireTime => item is invalid
 }
 
 func (i itemMetaInfo) IsExpired(now time.Time) bool {
-	if i.expireTime.IsZero() {
+	if i.expireTime == 0 {
 		return false
 	}
-	return i.expireTime.Before(now)
+	return now.Unix() >= int64(i.expireTime)
 }
 
 func newSegment(
-	path string,
+	dataFile *os.File,
+	walFile *os.File,
 	collectExpiredItemsPeriod time.Duration,
+	syncFileDuration time.Duration,
 ) (*segment, error) {
-	// open for read and write
-	// create file from scratch if it did not exist
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("can not open file %s: %w", path, err)
-	}
-
 	seg := &segment{
-		file:               file,
+		file:               dataFile,
 		mtx:                sync.RWMutex{},
 		hashToOffsetMap:    make(map[uint32][]itemMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
 		closedChan:         make(chan struct{}),
+		wal:                nil, // wal will be initiated after reading exitint file from disk
 	}
 
 	// read whole file and make fill hash to offset map and empty size to offset map
-	err = seg.loadDataFromDisk()
+	// also reads lastKnownLSN from file
+	err := seg.loadDataFromDisk()
 	if err != nil {
 		return nil, fmt.Errorf("can not load data from disk: %w", err)
 	}
 
+	walManager, unaplliedActions, err := wal.CreateWalAndReturnNotAppliedActions(walFile, seg.lastKnownLSN)
+	if err != nil {
+		return nil, err
+	}
+
+	seg.wal = walManager
+
+	if len(unaplliedActions) > 0 {
+		err = seg.performUnappliedWALActions(unaplliedActions)
+		if err != nil {
+			return nil, fmt.Errorf("got error when performing all unapplied actions from wal file: %w", err)
+		}
+
+		// after re applying actions from wal,
+		// need to run fsync to make a new checkpoint
+		// and sync segment's dirty file to disk
+		seg.rawFsync()
+	}
+
+	go seg.fsyncLoop(syncFileDuration)
 	go seg.collectExpiredItemsLoop(collectExpiredItemsPeriod)
 
 	return seg, nil
@@ -86,7 +113,7 @@ func (seg *segment) loadDataFromDisk() error {
 	file := seg.file
 
 	// move file cursor to the beginning of the file
-	fileBeginOffset, err := file.Seek(0, OriginWhence)
+	fileBeginOffset, err := file.Seek(0, constants.OriginWhence)
 	if err != nil {
 		return err
 	}
@@ -102,12 +129,18 @@ func (seg *segment) loadDataFromDisk() error {
 		copy(fileHeaderBuffer, segmentFileBeginMagicNumbers)
 		fileHeaderBuffer[segmentFileMagicNumbersSize] = segmentFileLayoutVerion1
 
+		lastLSNBuffer := make([]byte, 0, segmentFileLastKnownLSNSize)
+		lastLSNBuffer = binary.BigEndian.AppendUint64(lastLSNBuffer, segmentFileDefaultLastKnownLSN)
+
+		copy(fileHeaderBuffer[segmentFileLastKnownLSNOffset:], lastLSNBuffer)
+
 		_, err = file.WriteAt(fileHeaderBuffer, fileBeginOffset)
 		if err != nil {
 			return err
 		}
 
 		seg.fileSizeBytes = segmentFileHeaderSize
+		seg.lastKnownLSN = segmentFileDefaultLastKnownLSN
 
 		return nil
 	}
@@ -117,7 +150,7 @@ func (seg *segment) loadDataFromDisk() error {
 	}
 
 	// parse header from the buffer
-	fileMagicNumbers := fileHeaderBuffer[0:segmentFileMagicNumbersSize]
+	fileMagicNumbers := fileHeaderBuffer[:segmentFileMagicNumbersSize]
 
 	if !bytes.Equal(fileMagicNumbers, segmentFileBeginMagicNumbers) {
 		return ErrSegmentMagicNumbersDoNotMatch
@@ -127,6 +160,11 @@ func (seg *segment) loadDataFromDisk() error {
 	if fileVersion != segmentFileLayoutVerion1 {
 		return ErrSegmentUnknownVersionNumber
 	}
+	// here may be some other reads for data from reserved bytes in header
+
+	// initialize lastKnownLSN from header
+	lastKnownLSNBuffer := fileHeaderBuffer[segmentFileLastKnownLSNOffset:]
+	seg.lastKnownLSN = binary.BigEndian.Uint64(lastKnownLSNBuffer)
 
 	now := time.Now() // to check the expire fields of the items
 
@@ -168,7 +206,7 @@ func (seg *segment) loadDataFromDisk() error {
 			hashOffsets = append(hashOffsets, itemMetaInfo{
 				offset:     currentOffset,
 				size:       blobSize,
-				expireTime: blobHeader.ExpireTime(),
+				expireTime: blobHeader.Expire,
 			})
 
 			seg.hashToOffsetMap[keyHash] = hashOffsets
@@ -189,22 +227,28 @@ func (seg *segment) loadDataFromDisk() error {
 	return nil
 }
 
-func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration) error {
+func (seg *segment) Set(hash uint32, key []byte, value []byte, expire uint32) error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
-	// convert duration to timestamp only if it's not empty
-	expire := time.Time{}
-	expireInt := uint32(0)
-	if ttl.Milliseconds() > 0 {
-		expire = time.Now().Add(ttl)
-		expireInt = uint32(expire.Unix())
+	lsn, err := seg.wal.AppendSet(key, value, expire)
+	if err != nil {
+		panic(fmt.Errorf("got error when append set action to WAL: %w", err))
 	}
 
+	err = seg.rawWriteLastKnownLSN(lsn)
+	if err != nil {
+		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+	}
+
+	return seg.rawSet(hash, key, value, expire)
+}
+func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32) error {
+	// convert duration to timestamp only if it's not empty
 	kve := blob.KVE{
 		Key:    key,
 		Value:  value,
-		Expire: expireInt,
+		Expire: expire,
 	}
 
 	// first try to find if there is this key already set
@@ -234,7 +278,6 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 				// write on disk that data is deleted
 				deletedStatusByte := []byte{blob.StatusDeleted}
 
-				// TODO make sure that if something is broken during this write then nothing bad will happen
 				_, err := seg.file.WriteAt(deletedStatusByte, offsetInfo.offset+blob.StatusOffset)
 				if err != nil {
 					panic(fmt.Errorf(
@@ -269,15 +312,20 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 		// Swap the first value with the last value. And decrement slice size by 1.
 		// This is a cheap way to delete item from slice without O(N) operation
 		// TODO also make it more understandable
-		emptyOffsets[0] = emptyOffsets[len(emptyOffsets)-1]
-
-		emptyOffsets = emptyOffsets[:len(emptyOffsets)-1]
+		if len(emptyOffsets) > 1 {
+			emptyOffsets[0] = emptyOffsets[len(emptyOffsets)-1]
+			emptyOffsets = emptyOffsets[:len(emptyOffsets)-1]
+		} else {
+			emptyOffsets = emptyOffsets[:0]
+		}
 
 		seg.emptySizeToOffsets[sizeOfBlob] = emptyOffsets
 	}
 
+	appendAtTheEnd := false
 	if offset == 0 {
 		offset = seg.fileSizeBytes
+		appendAtTheEnd = true
 	}
 
 	_, err := seg.file.WriteAt(binaryBlob, offset)
@@ -289,7 +337,15 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, ttl time.Duration
 		))
 	}
 
-	seg.fileSizeBytes += int64(sizeOfBlob)
+	if appendAtTheEnd {
+		seg.fileSizeBytes += int64(sizeOfBlob)
+	}
+
+	// could be modified since last retrieval so obtain it one more time
+	offsetsWithCurrentHash, ok = seg.hashToOffsetMap[hash]
+	if !ok {
+		offsetsWithCurrentHash = nil
+	}
 
 	// modify seg.hashToOffsetMap map and save new offset for current hash
 	offsetsWithCurrentHash = append(offsetsWithCurrentHash, itemMetaInfo{
@@ -311,6 +367,10 @@ func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 	seg.mtx.RLock()
 	defer seg.mtx.RUnlock()
 
+	return seg.rawGet(hash, key)
+}
+
+func (seg *segment) rawGet(hash uint32, key []byte) ([]byte, error) {
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
 	if !ok {
 		return nil, ErrNotFound
@@ -359,6 +419,20 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
+	lsn, err := seg.wal.AppendDel(key)
+	if err != nil {
+		panic(fmt.Errorf("got error when append del action to WAL: %w", err))
+	}
+
+	err = seg.rawWriteLastKnownLSN(lsn)
+	if err != nil {
+		panic(fmt.Errorf("got error when trying to write last known LSN %d to segment: %w", lsn, err))
+	}
+
+	return seg.rawDelete(hash, key)
+}
+
+func (seg *segment) rawDelete(hash uint32, key []byte) error {
 	offsetsWithCurrentHash, ok := seg.hashToOffsetMap[hash]
 	if !ok {
 		return ErrNotFound
@@ -410,7 +484,6 @@ func (seg *segment) Delete(hash uint32, key []byte) error {
 	// write on disk that data is deleted
 	deletedStatusByte := []byte{blob.StatusDeleted}
 
-	// TODO make sure that if something is broken during this write then norhing bad will happen
 	_, err := seg.file.WriteAt(deletedStatusByte, itemOffsetInfo.offset+blob.StatusOffset)
 	if err != nil {
 		panic(fmt.Errorf(
@@ -458,9 +531,12 @@ func (seg *segment) rawDeleteOffsetFromMemory(
 	// Just replace duplicate with the last item and then crop the slice
 	currentLength := len(offsetsWithCurrentHash)
 
-	offsetsWithCurrentHash[itemIdx] = offsetsWithCurrentHash[currentLength-1]
-
-	offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
+	if len(offsetsWithCurrentHash) > 1 {
+		offsetsWithCurrentHash[itemIdx] = offsetsWithCurrentHash[currentLength-1]
+		offsetsWithCurrentHash = offsetsWithCurrentHash[:currentLength-1]
+	} else {
+		offsetsWithCurrentHash = offsetsWithCurrentHash[:0]
+	}
 
 	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
 }
@@ -469,23 +545,31 @@ func (seg *segment) Close() error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
+	seg.rawFsync()
+
 	close(seg.closedChan)
 
-	err := seg.file.Sync()
-	if err != nil {
-		panic(fmt.Errorf(
-			"tried to sync segment's file on disk when closing segment, but got error: %w",
-			err,
-		))
-	}
-
-	err = seg.file.Close()
+	err := seg.file.Close()
 	if err != nil {
 		panic(fmt.Errorf(
 			"tried to close segment's file when closing segment, but got error: %w",
 			err,
 		))
 	}
+
+	return nil
+}
+
+func (seg *segment) rawWriteLastKnownLSN(lastKnownLSN uint64) error {
+	var buffer []byte
+	buffer = binary.BigEndian.AppendUint64(buffer, lastKnownLSN)
+
+	_, err := seg.file.WriteAt(buffer, segmentFileLastKnownLSNOffset)
+	if err != nil {
+		return fmt.Errorf("got error when writing last known lasn to segment's file: %w", err)
+	}
+
+	seg.lastKnownLSN = lastKnownLSN
 
 	return nil
 }
