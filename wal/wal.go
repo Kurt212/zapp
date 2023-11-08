@@ -39,12 +39,14 @@ func CreateWalAndReturnNotAppliedActions(file *os.File, lastAppliedLSN uint64) (
 		lastLSN: lastAppliedLSN,
 	}
 
-	actions, lastLSN, err := initialRead(file, lastAppliedLSN)
+	actions, lastLSNFromFile, err := initialRead(file, lastAppliedLSN)
 	if err != nil {
 		return nil, nil, fmt.Errorf("got error when initial reading wal file: %w", err)
 	}
 
-	w.lastLSN = lastLSN
+	if lastLSNFromFile > 0 {
+		w.lastLSN = lastLSNFromFile
+	}
 
 	return w, actions, nil
 }
