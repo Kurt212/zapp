@@ -1051,10 +1051,6 @@ func TestWritesAndDeletes(t *testing.T) {
 
 		dataFileName := dataFile.Name()
 
-		require.NoError(t, err)
-
-		defer os.Remove(dataFile.Name())
-
 		walFile, err := os.CreateTemp(dir, "*")
 		require.NoError(t, err)
 
@@ -1099,5 +1095,105 @@ func TestWritesAndDeletes(t *testing.T) {
 
 		err = segment.Close()
 		require.NoError(t, err)
+	})
+}
+
+func TestWorkWithoutWAL(t *testing.T) {
+	t.Run("set and get and durability check", func(t *testing.T) {
+		dir := os.TempDir()
+
+		dataFile, err := os.CreateTemp(dir, "*")
+		require.NoError(t, err)
+
+		defer os.Remove(dataFile.Name())
+
+		dataFileName := dataFile.Name()
+
+		segment, err := newSegment(dataFile, nil, time.Hour, time.Hour)
+		require.NoError(t, err)
+
+		key := []byte("key1")
+		value := []byte("value1")
+
+		err = segment.Set(hash(key), key, value, 0)
+		require.NoError(t, err)
+
+		realValue, err := segment.Get(hash(key), key)
+		require.NoError(t, err)
+
+		require.Equal(t, value, realValue)
+
+		err = segment.Close()
+		require.NoError(t, err)
+
+		// reopen data file and segment and check old key value
+		dataFile, err = os.Open(dataFileName)
+		require.NoError(t, err)
+
+		segment, err = newSegment(dataFile, nil, time.Hour, time.Hour)
+		require.NoError(t, err)
+
+		realValue, err = segment.Get(hash(key), key)
+		require.NoError(t, err)
+
+		require.Equal(t, value, realValue)
+	})
+
+	t.Run("restore state from existing file and serve get", func(t *testing.T) {
+		dir := os.TempDir()
+
+		dataFile, err := os.CreateTemp(dir, "*")
+		require.NoError(t, err)
+
+		defer os.Remove(dataFile.Name())
+
+		key := []byte("key1")
+		value := []byte("value1")
+
+		data := map[string]v{
+			string(key): {
+				value:  value,
+				expire: 0,
+				lsn:    0,
+			},
+		}
+
+		err = makeSegment(dataFile, data)
+		require.NoError(t, err)
+
+		segment, err := newSegment(dataFile, nil, time.Hour, time.Hour)
+		require.NoError(t, err)
+
+		realValue, err := segment.Get(hash(key), key)
+		require.NoError(t, err)
+
+		require.Equal(t, value, realValue)
+	})
+
+	t.Run("set expired key, run expired check and fsync", func(t *testing.T) {
+		dir := os.TempDir()
+
+		dataFile, err := os.CreateTemp(dir, "*")
+		require.NoError(t, err)
+
+		defer os.Remove(dataFile.Name())
+
+		key := []byte("key1")
+		value := []byte("value1")
+
+		segment, err := newSegment(dataFile, nil, time.Hour, time.Hour)
+		require.NoError(t, err)
+
+		now := time.Now()
+		expiredTime := now.Add(-time.Hour)
+
+		err = segment.Set(hash(key), key, value, uint32(expiredTime.Unix()))
+		require.NoError(t, err)
+
+		segment.rawCollectExpiredItems()
+		segment.rawFsync()
+
+		_, err = segment.Get(hash(key), key)
+		require.ErrorIs(t, err, ErrNotFound)
 	})
 }

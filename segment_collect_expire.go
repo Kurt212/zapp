@@ -7,6 +7,10 @@ import (
 func (seg *segment) collectExpiredItemsLoop(
 	tickDelay time.Duration,
 ) {
+	// zero value means user wants to disable deleting expired items from inmemory state
+	if tickDelay == 0 {
+		return
+	}
 	ticker := time.NewTicker(tickDelay)
 
 	for {
