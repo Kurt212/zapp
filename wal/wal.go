@@ -10,7 +10,7 @@ type W struct {
 	file    *os.File // represent the persistent file used to store wal data
 	lastLSN uint64   // last known LSN in this log file. Used to generate next LSN
 
-	lock sync.Mutex // needed to work with WAL file, to avoid LSN generation and file appending data races and
+	lock sync.Mutex // needed to work with WAL file, to avoid LSN generation and file appending data races
 }
 
 type Action struct {
