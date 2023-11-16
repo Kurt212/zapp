@@ -3,3 +3,4 @@ data
 .vscode
 *.prof
 *.trace
+.DS_Store
