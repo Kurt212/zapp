@@ -56,14 +56,14 @@ func New(params Params) (*DB, error) {
 		}
 
 		// randomize syncPeriod so that each segment will process expired items with random delay depending on params
-		syncPeriod := time.Duration(0)
-		if params.removeExpiredPeriod > 0 {
+		syncPeriod := params.syncPeriod
+		if params.syncPeriodDeltaMax > 0 {
 			syncPeriod = generateNewPeriodWithRandomDelta(params.syncPeriod, params.syncPeriodDeltaMax)
 		}
 
 		// randomize expiredPeriod so that each segment will process expired items with random delay depending on params
-		expiredPeriod := time.Duration(0)
-		if params.removeExpiredPeriod > 0 {
+		expiredPeriod := params.removeExpiredPeriod
+		if params.removeExpiredDeltaMax > 0 {
 			expiredPeriod = generateNewPeriodWithRandomDelta(params.removeExpiredPeriod, params.removeExpiredDeltaMax)
 		}
 
