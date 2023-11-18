@@ -11,4 +11,6 @@ var (
 
 	ErrInvalidPath        = errors.New("invalid path for storing data")
 	ErrInvalidSegmentsNum = errors.New("invalid number of segments")
+
+	ErrClosed = errors.New("segment is closed")
 )

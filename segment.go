@@ -240,6 +240,10 @@ func (seg *segment) Set(hash uint32, key []byte, value []byte, expire uint32) er
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
+	if seg.closed {
+		return ErrClosed
+	}
+
 	// if wal manager field is nil, then do nothing with the WAL logic and work without it
 	// this increases performace dramatically
 	if seg.wal != nil {
@@ -380,6 +384,10 @@ func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 	seg.mtx.RLock()
 	defer seg.mtx.RUnlock()
 
+	if seg.closed {
+		return nil, ErrClosed
+	}
+
 	return seg.rawGet(hash, key)
 }
 
@@ -431,6 +439,10 @@ func (seg *segment) rawGet(hash uint32, key []byte) ([]byte, error) {
 func (seg *segment) Delete(hash uint32, key []byte) error {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
+
+	if seg.closed {
+		return ErrClosed
+	}
 
 	// if wal manager field is nil, then do nothing with the WAL logic and work without it
 	// this increases performace dramatically
