@@ -737,8 +737,7 @@ func TestOpenFromExistingSegmentFiles(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 
 		expectedDataFileBuffer := bytes.NewBuffer(nil)
 		err = makeSegmentOrdered(expectedDataFileBuffer, segmentDataOrdered)
@@ -831,8 +830,7 @@ func TestOpenFromExistingSegmentFiles(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 
 		walFile, err = os.Open(walFileName)
 		require.NoError(t, err)
@@ -907,8 +905,7 @@ func TestOpenFromExistingSegmentFiles(t *testing.T) {
 		_, err = segment.Get(hash(key), key)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 	})
 }
 
@@ -946,8 +943,7 @@ func TestWritesAndDeletes(t *testing.T) {
 
 		require.Equal(t, expectedValue, value)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 
 		dataFile, err = os.OpenFile(dataFileName, os.O_RDWR, 0644)
 		require.NoError(t, err)
@@ -962,8 +958,7 @@ func TestWritesAndDeletes(t *testing.T) {
 
 		require.Equal(t, expectedValue, value)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 	})
 
 	t.Run("set one key then del key", func(t *testing.T) {
@@ -998,8 +993,7 @@ func TestWritesAndDeletes(t *testing.T) {
 		_, err = segment.Get(hash(key), key)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 
 		dataFile, err = os.OpenFile(dataFileName, os.O_RDWR, 0644)
 		require.NoError(t, err)
@@ -1012,8 +1006,7 @@ func TestWritesAndDeletes(t *testing.T) {
 		_, err = segment.Get(hash(key), key)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 	})
 
 	t.Run("set one key then del key", func(t *testing.T) {
@@ -1037,8 +1030,7 @@ func TestWritesAndDeletes(t *testing.T) {
 		err = segment.Delete(hash(key), key)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 	})
 
 	t.Run("set expired, clear expired, check not found", func(t *testing.T) {
@@ -1079,8 +1071,7 @@ func TestWritesAndDeletes(t *testing.T) {
 		err = segment.Delete(hash(key), key)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 
 		dataFile, err = os.OpenFile(dataFileName, os.O_RDWR, 0644)
 		require.NoError(t, err)
@@ -1093,8 +1084,7 @@ func TestWritesAndDeletes(t *testing.T) {
 		_, err = segment.Get(hash(key), key)
 		require.ErrorIs(t, err, ErrNotFound)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 	})
 }
 
@@ -1123,8 +1113,7 @@ func TestWorkWithoutWAL(t *testing.T) {
 
 		require.Equal(t, value, realValue)
 
-		err = segment.Close()
-		require.NoError(t, err)
+		segment.Close()
 
 		// reopen data file and segment and check old key value
 		dataFile, err = os.Open(dataFileName)

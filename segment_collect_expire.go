@@ -32,6 +32,10 @@ func (seg *segment) collectExpiredItems() {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
 
+	if seg.closed {
+		return
+	}
+
 	seg.rawCollectExpiredItems()
 }
 

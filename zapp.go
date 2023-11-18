@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -130,15 +131,17 @@ func (db *DB) Delete(key string) error {
 	return nil
 }
 
-func (db *DB) Close() error {
-	for idx, segment := range db.segments {
-		err := segment.Close()
-		if err != nil {
-			return fmt.Errorf("close segment %d: %w", idx, err)
-		}
+func (db *DB) Close() {
+	wg := sync.WaitGroup{}
+	for _, s := range db.segments {
+		wg.Add(1)
+		go func(s *segment) {
+			defer wg.Done()
+			s.Close()
+		}(s)
 	}
 
-	return nil
+	wg.Wait()
 }
 
 func (db *DB) getSegmentForKey(hash uint32) *segment {

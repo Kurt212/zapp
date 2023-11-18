@@ -36,6 +36,10 @@ func (s *segment) fsync() {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
+	if s.closed {
+		return
+	}
+
 	s.rawFsync()
 }
 

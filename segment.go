@@ -40,6 +40,7 @@ type segment struct {
 	hashToOffsetMap    map[uint32][]itemMetaInfo // this is a list of items with the same hash value. Hash collisions sometimes happen and it's needed to deal with them. Although collisions happen quite not often
 	emptySizeToOffsets map[int][]int64           // this is a list of known empty offset of certain sizes. When key is deleted or expired, its offset will be reused later to store new data. That's why segment tracks all empty offsets
 	closedChan         chan struct{}             // this is a generic technic to notify each subprocess assosiated with this segment, that it must be terminated gracefully, because segment is closed and is no longer serving requests
+	closed             bool                      // set to true value when segment's Close() method has been called. Should check this before doing anything with segment, because segment might have been closed already but don't know yet
 
 	wal          *wal.W // optional. wal is an object to work with write ahead log, generate new log entries and get log sequence numbers (LSNs). User may not want to work with WAL and increase write-operations throughput.
 	lastKnownLSN uint64 // lastKnownLSN is the last known wal's LSN appliend to this segment
@@ -73,6 +74,7 @@ func newSegment(
 		hashToOffsetMap:    make(map[uint32][]itemMetaInfo),
 		emptySizeToOffsets: make(map[int][]int64),
 		closedChan:         make(chan struct{}),
+		closed:             false,
 		wal:                nil, // wal will be initiated after reading file from disk
 	}
 
@@ -556,9 +558,11 @@ func (seg *segment) rawDeleteOffsetFromMemory(
 	seg.hashToOffsetMap[hash] = offsetsWithCurrentHash
 }
 
-func (seg *segment) Close() error {
+func (seg *segment) Close() {
 	seg.mtx.Lock()
 	defer seg.mtx.Unlock()
+
+	seg.closed = true
 
 	seg.rawFsync()
 
@@ -571,8 +575,6 @@ func (seg *segment) Close() error {
 			err,
 		))
 	}
-
-	return nil
 }
 
 func (seg *segment) rawWriteLastKnownLSN(lastKnownLSN uint64) error {
