@@ -4,7 +4,7 @@
 
 | Word  | Meaning |
 | ------------- | ------------- |
-| Zapp | A high-performance key-value database, which stores data on disk |
+| Zapp | A high-performance key-value database, which stores data on a drive |
 | Item | A database key-value entry with optional TTL value |
 | Segment | Zapp's internal storage of items. All items are partitions over the segments. |
 | MurMur3 | A popular hash function algorithm with zero allocations used to calculate a hash value for a key |
@@ -20,14 +20,14 @@
 
 Zapp is a key-value database designed to be scalable. Scalability can be achieved by vertical scaling number of CPUs and number of SSD drives. Currently, Zapp provides only 3 types of operations: Set, Get and Delete.
 
-Zapp is designed for low RAM usage. Keys and Values are not stored in memory explicitly. Instead, Zapp provides a mechanism to store data on the disk and effectively retrieve it from the disk.
+Zapp is designed for low RAM usage. Keys and Values are not stored in memory explicitly. Instead, Zapp provides a mechanism to store data on the drive and effectively retrieve it from the drive.
 
 The data is partitioned over a variable number of partitions. Each partition is called a "segment". Each key belongs to one single segment. The keys are spread over segments randomly by using the MurMur3 hash function.
 
 Each segment has one file containing keys, values, TTL and some metadata. This file is called Data File.
 
 The idea to introduce the segments concept is that:
-1. Data written to a segment is stored in the Operational System's file system buffers and synced to the disk in the background. Two separate segments have different sync time and therefore requests don't get blocked at once.
+1. Data written to a segment is stored in the Operational System's file system buffers and synced to the drive in the background. Two separate segments have different sync time and therefore requests don't get blocked at once.
 2. Segments' Data Files can belong to different SSD drives. This is how Zapp achieves scalability.
 
 ## Segment's high-level Architecture 
@@ -42,13 +42,13 @@ Each segment's Data File consists of a header and a body. The Header contains:
 - (Only if WAL enabled) Last applied LSN (Log Sequence Number), which refers to some entry on the WAL file.
 
 The rest of the file contains segment's items. An Item is a single Key-Value-Expiration Time-Metadata entry in the file. Each item's size is padded to the nearest power of 2. This is a tricky technique, that allows reusing item's offsets, after the key has been expired or deleted.
-Zapp tries to reuse item's offsets, so that it doesn't have to allocate a new item on disk every time. Happily, items often have the same power-of-2 sizes and Zapp can reuse old item's offsets to store some new data.
+Zapp tries to reuse item's offsets, so that it doesn't have to allocate a new item on a drive every time. Happily, items often have the same power-of-2 sizes and Zapp can reuse old item's offsets to store some new data.
 
 ## Write Ahead Log (WAL)
 
 Zapp implements an optional feature that enables Write Ahead Logging technique. WAL file is an append-only file. Each write operation is first appended to the WAL File and only then written to the Data File
 
-Enabling Write Ahead Logging provides durability guarantees. In case of a sudden failure, some data from the Data File might not be synced to disk. After restarting and recovering from the existing file, Zapp may not find the latest items. With the help of the WAL file, Zapp will manage to restore each segment's Data File by reapplying actions in the exact same order.
+Enabling Write Ahead Logging provides durability guarantees. In case of a sudden failure, some data from the Data File might not be synced to the drive. After restarting and recovering from the existing file, Zapp may not find the latest items. With the help of the WAL file, Zapp will manage to restore each segment's Data File by reapplying actions in the exact same order.
 
 # In-memory state
 
@@ -69,8 +69,8 @@ Currently, Zapp provides options to enable two optional background processes: sy
 
 ### Sync file process
 
-Sync file process is an optional background process, that syncs the Data File to the disk and truncates the WAL file. The idea is that, once we want to have guarantees of durability, we have to make sure, that data file is synced to a disk periodically. Syncing files to the disk is a very expensive operation, and Operating Systems try to do it in the background if possible. After the Data File is synced to the disk, WAL file can be truncated without fear, because all applied operations are already saved.
+Sync file process is an optional background process, that syncs the Data File to the drive and truncates the WAL file. The idea is that, once we want to have guarantees of durability, we have to make sure, that data file is synced to a drive periodically. Syncing files to the drive is a very expensive operation, and Operating Systems try to do it in the background if possible. After the Data File is synced to the drive, WAL file can be truncated without fear, because all applied operations are already saved.
 
 ### Collect expired items process
 
-Collect expired items process is an optional background process, that modifies only in-memory state, finds all expired items and moves them to the Size-To-Offset Map. It is very recommended to enable Collect Expired Items Process if you use TTL feature often. Zapp will not return expired items when reading it from disk. But Zapp will not mark expired items as deleted and remove them from the Hash-To-Offset Map itself.
+Collect expired items process is an optional background process, that modifies only in-memory state, finds all expired items and moves them to the Size-To-Offset Map. It is very recommended to enable Collect Expired Items Process if you use TTL feature often. Zapp will not return expired items when reading it from the drive. But Zapp will not mark expired items as deleted and remove them from the Hash-To-Offset Map itself.
