@@ -2,7 +2,7 @@
 
 The tests were run on a new VPS rented in [Yandex Cloud](https://cloud.yandex.com). 
 The setup was:
-- Ununtu 22.04
+- Ubuntu 22.04
 - 8 CPUs
 - 16 GB RAM and 8 GB in the third test
 - Fast SSD. Max IOPS 75000 for read and for write. Max bandwidth 1024 MB/s for read and for write
@@ -115,8 +115,8 @@ As you can see, the more threads Zapp uses, the better write performance is. And
 
 So this test was supposed to show how Zapp would perform in a real life situation. The changes are:
 - VPS has now only 8 GM RAM.
-- The dataset changes drammatically, so it doesn't fit in RAM anymore.
-- The keys are shuffled randomly before each operation: set, reset, get, delete. This makes sure, that neighbour keys are not served from OS cache. And we would have a lot of cache misses.
+- The dataset changes dramatically, so it doesn't fit in RAM anymore.
+- The keys are shuffled randomly before each operation: set, reset, get, delete. This makes sure, that neighbor keys are not served from OS cache. And we would have a lot of cache misses.
 - Key size is still 10 bytes. But value size is now variable.
 
 WAL disabled:
@@ -148,6 +148,6 @@ And with WAL enabled:
 | 2 048,00 | 2 048,00 | 10 000 000,00 | 2 048,00 | 1,00 | 18 901,00 | 12 717,00 | 768 392,00 | 16 875,00 | 19,07 |
 | 2 048,00 | 2 048,00 | 10 000 000,00 | 4 096,00 | 1,00 | 13 356,00 | 10 091,00 | 445 141,00 | 16 124,00 | 38,15 |
 
-So, as you can see, the performance of all operations drops terribly, while dataset size grows. WAL feature still makes all requests performe worse. 
+So, as you can see, the performance of all operations drops terribly, while dataset size grows. WAL feature still makes all requests perform worse. 
 
 And the most important thing is, that, when dataset doesn't fit in RAM and the access pattern is pretty random, the performance is expected to be 10x times worse.

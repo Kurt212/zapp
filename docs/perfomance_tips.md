@@ -10,7 +10,7 @@ Zapp is an IO-bounded system, because it makes several read and write operations
 
 How fast Zapp serves your requests depends on how you use it. It's not a silver bullet and there are a lot of cases, when you can choose another Database and achieve more performance.
 
-1. Zapp fully relies on OS's filesystem caching mechanism. When reading and writing to Data File the OS writes and reads from special buffers in RAM. These buffers is just a cache, which OS creates to reduce real IO operations. The buffers are synced to the real device in background implicitly by the OS or explicitly by the programm with the [fsync syscall](https://en.wikipedia.org/wiki/Sync_(Unix)).
+1. Zapp fully relies on OS's filesystem caching mechanism. When reading and writing to Data File the OS writes and reads from special buffers in RAM. These buffers is just a cache, which OS creates to reduce real IO operations. The buffers are synced to the real device in background implicitly by the OS or explicitly by the program with the [fsync syscall](https://en.wikipedia.org/wiki/Sync_(Unix)).
 
 2. Zapp has a background process of syncing data to the drive explicitly. It's a periodic task executed on timer. Calling Sync is a very expensive operation, it blocks execution of incoming requests. So the more often the Sync is called, the less performant your system will be. On the other hand, syncing data is important, if you are afraid to loose data. So this is a good parameter for tuning.
 
