@@ -9,7 +9,7 @@ And also this is a parody on all these modern pathos databases, which appear and
 - [Example code](./docs/examples/)
 - [Zapp's Go Docs](https://pkg.go.dev/github.com/Kurt212/zapp)
 - [Internals overview](./docs/internals.md). How Zapp works
-- [Performance hints](./docs/perfomance_hints.md). How to make Zapp run faster
+- [Performance tips](./docs/perfomance_tips.md). How to make Zapp run faster
 - [Performance tests](./docs/performance_test.md). Different usecases, and how they affect operations performance 
 
 ## Why this name
