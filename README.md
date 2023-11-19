@@ -53,7 +53,7 @@ Worth mentioning, that Zapp was inspired by another golang kv database [sniper](
 - [x] Get, Set, Delete operations
 - [x] Expiration time support. Expired keys are collected in background
 - [x] Optional Write Ahead Logging. Each write operation generate a new WAL entry with a unique LSN.
-- [x] Restoring Segment's data from WAL, if last applied LSN is lower, then the most recent LSN from WAL
+- [x] Restoring Segment's data from WAL, if last applied LSN is lower, than the most recent LSN from WAL
 - [x] Unit Test Coverage for most of the current Segment's logic. Perform a lot of testing for correctness
 - [x] Write a performance testing code and make real performance testing on a VPS
 - [ ] Write Docs and release to public
