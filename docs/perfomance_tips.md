@@ -1,4 +1,4 @@
-# Performance Hints
+# Performance Tips
 
 ## Drive bounded system by design
 
@@ -18,7 +18,7 @@ How fast Zapp serves your requests depends on how you use it. It's not a silver 
 
 4. The OS filesystem caching performance depends on whether the data is stored in memory, or it's too big to fit. So the length of your keys and values matters. The smaller data you store - the more chance it is cached by OS.
 
-5. The important hardware drive parameters are both the write and read speed (MB/s) and the IO write and read operations (IO/s). If your data is large, then the performance will be probably limited by speed per second. If your data is pretty small, then the performance will be limited by the number of IO operations per second. 
+5. The important hardware drive parameters are both the write and read bandwidth (MB/s) and the IO write and read operations (IO/s). If your data is large, then the performance will be probably limited by bandwidth. If your data is pretty small, then the performance will be limited by the number of IO operations per second. 
 
 6. At last, your pattern of accessing data is important, if not all data fits in RAM. If you are not lucky, you will run into a lot of cache misses. A cache miss happens, when OS has no cache for that particular part and it accesses the real hardware drive to read or to write. So basically, if your requests are, for example, [normally distributed](https://en.wikipedia.org/wiki/Normal_distribution), then your performance will be better.
 
@@ -47,7 +47,7 @@ In conclusion, let's image how the most performant and the lest performant setup
 
 ### The best case
 
-If I follow all the tuning performance hints, then I would set up a separate server with a lot of fast RAM for good caching and several independent SSD drives to split data over them. I would disable WAL feature. And I would make the sync process run not too often. My data length would be small enough.
+If I follow all the tuning performance tips, then I would set up a separate server with a lot of fast RAM for good caching and several independent SSD drives to split data over them. I would disable WAL feature. And I would make the sync process run not too often. My data length would be small enough.
 
 ### The worst case
 
