@@ -56,7 +56,7 @@ Worth mentioning, that Zapp was inspired by another golang kv database [sniper](
 - [x] Restoring Segment's data from WAL, if last applied LSN is lower, than the most recent LSN from WAL
 - [x] Unit Test Coverage for most of the current Segment's logic. Perform a lot of testing for correctness
 - [x] Write a performance testing code and make real performance testing on a VPS
-- [ ] Write Docs and release to public
+- [x] Write Docs and release to public
 - [ ] Implement a mutable Min-Heap data structure inside Zapp to track items, which are about to expire. This is a replacement for an O(N) algorithm of checking each item in current collect-expired-items process
 - [ ] Implement metrics reporting: performance, keys, dataset size, segments etc.
 - [ ] Implement Zapp as a standalone daemon server with some standard Key-Value protocol. For example, [Memcached protocol](https://github.com/memcached/memcached/blob/master/doc/protocol.txt)
