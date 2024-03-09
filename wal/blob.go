@@ -55,7 +55,7 @@ func initialRead(file io.ReadSeeker, lastAppliedLSN uint64) (_ []Action, lastSee
 			keylen := binary.BigEndian.Uint16(expireAndKeylenAndVallenBuffer[expireSize : expireSize+keylenSize])
 			vallen := binary.BigEndian.Uint32(expireAndKeylenAndVallenBuffer[expireSize+keylenSize:])
 
-			// if lastAppliedLSN is greater than this wal entry LSN, then it means that this lsb wal already appliend
+			// if lastAppliedLSN is greater than this wal entry LSN, then it means that this entry was already appliend
 			// now need to move file cursor to next entry and skip keylen + vallen bytes
 			if lastAppliedLSN >= lsn {
 				_, err := file.Seek(int64(keylen)+int64(vallen), constants.CurrentPositionWhence)
@@ -100,7 +100,7 @@ func initialRead(file io.ReadSeeker, lastAppliedLSN uint64) (_ []Action, lastSee
 			}
 			keylen := binary.BigEndian.Uint16(keylenBuffer)
 
-			// if lastAppliedLSN is greater than this wal entry LSN, then it means that this lsb wal already appliend
+			// if lastAppliedLSN is greater than this wal entry LSN, then it means that this entry was already appliend
 			// now need to move file cursor to next entry and skip keylen + vallen bytes
 			if lastAppliedLSN >= lsn {
 				_, err := file.Seek(int64(keylen), constants.CurrentPositionWhence)

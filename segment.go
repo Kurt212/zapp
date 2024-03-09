@@ -289,7 +289,7 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 			onDiskKey := kveOnDisk.Key
 
 			// if found previous blob of current key
-			// then mark if as deleted
+			// then mark it as deleted
 			// because we are replacing it with a new value now
 			if bytes.Equal(key, onDiskKey) {
 				// write on disk that data is deleted
@@ -378,7 +378,7 @@ func (seg *segment) rawSet(hash uint32, key []byte, value []byte, expire uint32)
 
 func (seg *segment) Get(hash uint32, key []byte) ([]byte, error) {
 	// read lock here to increate Get speed. There's no option to modify any data here, only read it
-	// for example can not delete expired item here and add it to empty map. Adding to emty map requires
+	// for example can not delete expired item here and add it to empty map. Adding to empty map requires
 	// releasing read lock and then taking write lock. Because of the data race between those two operations
 	// need to revalidate if the item still exists and it's still expired
 	seg.mtx.RLock()
@@ -424,7 +424,7 @@ func (seg *segment) rawGet(hash uint32, key []byte) ([]byte, error) {
 		// the only problem is that the item may be expired, but it's still on disk
 		if bytes.Equal(key, onDiskKey) {
 			// must check if key is expired now. Then pretend that we didn't see it and return NotFound
-			// Later backgroud routine, which deletes all expired keys will clean it and add to empty map
+			// Later backgroud routine, which deletes all expired keys, will clean it and add to empty map
 			if kveOnDisk.IsExpired(now) {
 				return nil, ErrNotFound
 			}
